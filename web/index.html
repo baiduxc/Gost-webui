@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GOST 面板</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- 登录 -->
+<div id="login" class="login-wrap hidden">
+  <div class="login-card">
+    <div class="mark">GP</div>
+    <h1>GOST 面板</h1>
+    <p class="sub">转发管理 · 流量管控 · 告警通知</p>
+    <div class="field">
+      <label for="loginUser">用户名</label>
+      <input id="loginUser" type="text" value="admin" autocomplete="username">
+    </div>
+    <div class="field">
+      <label for="loginPass">密码</label>
+      <input id="loginPass" type="password" autocomplete="current-password" placeholder="请输入密码">
+    </div>
+    <div id="loginErr" class="notice err hidden"></div>
+    <button id="loginBtn" class="btn">登 录</button>
+  </div>
+</div>
+
+<!-- 主界面 -->
+<div id="app" class="app hidden">
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">
+      <div class="mark">GP</div>
+      <div>
+        <div class="name">GOST 面板</div>
+        <div class="sub" id="brandSub">Relay Panel</div>
+      </div>
+    </div>
+    <nav class="nav" id="nav">
+      <a data-view="overview" class="active"><span data-icon="grid"></span>概览</a>
+      <a data-view="nodes"><span data-icon="server"></span>节点</a>
+      <a data-view="notify"><span data-icon="bell"></span>通知提醒</a>
+      <a data-view="system"><span data-icon="settings"></span>系统设置</a>
+    </nav>
+    <div class="sidebar-foot">
+      <span class="status-dot" id="gostDot"></span>
+      <span id="gostText">gost 状态检测中</span>
+    </div>
+  </aside>
+
+  <main>
+    <div class="topbar">
+      <h1 id="viewTitle">概览</h1>
+      <div class="actions">
+        <span class="chip" id="hostChip">—</span>
+        <button class="btn ghost sm" id="themeBtn" title="切换主题"><span data-icon="moon"></span></button>
+        <button class="btn ghost sm" id="refreshBtn" title="刷新"><span data-icon="refresh"></span></button>
+        <button class="btn ghost sm" id="logoutBtn">退出</button>
+      </div>
+    </div>
+
+    <div class="content">
+      <!-- 概览 -->
+      <section id="view-overview" class="view">
+        <div id="hostWarnOverview"></div>
+        <div class="grid cols-4 cards" id="statCards"></div>
+
+        <div class="grid cols-3 cards" style="margin-top:24px" id="hostCards"></div>
+
+        <div class="card" style="margin-top:24px">
+          <div class="card-head">
+            <div>
+              <h2>近 30 天流量</h2>
+              <div class="desc" id="chartTotal">—</div>
+            </div>
+          </div>
+          <canvas id="chart" class="chart-box" height="240"></canvas>
+          <div class="chart-legend">
+            <span><i class="swatch" style="background:var(--color-accent)"></i>上行</span>
+            <span><i class="swatch" style="background:var(--color-text-tertiary)"></i>下行</span>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:24px">
+          <div class="card-head"><div><h2>流量排行</h2><div class="desc">本月各节点用量</div></div></div>
+          <div id="topNodes"></div>
+        </div>
+      </section>
+
+      <!-- 节点 -->
+      <section id="view-nodes" class="view hidden">
+        <div id="hostWarn"></div>
+        <div class="card-head">
+          <div>
+            <h2>节点</h2>
+            <div class="desc" id="nodesSummary">—</div>
+          </div>
+          <div class="btn-group">
+            <button class="btn" id="addNodeBtn"><span data-icon="plus"></span>添加节点</button>
+          </div>
+        </div>
+        <div class="table-wrap" id="nodeTable"></div>
+      </section>
+
+      <!-- 通知 -->
+      <section id="view-notify" class="view hidden">
+        <div class="card">
+          <div class="card-head">
+            <div>
+              <h2>Telegram 通知</h2>
+              <div class="desc">通过 Telegram Bot 发送通知，仅主动推送、不建立长连接</div>
+            </div>
+            <div class="btn-group">
+              <button class="btn secondary sm" id="tgTestBtn">发送测试</button>
+              <button class="btn sm" id="tgSaveBtn">保存</button>
+            </div>
+          </div>
+
+          <div class="field">
+            <label class="switch"><input type="checkbox" id="tgEnabled"><span class="track"></span>
+              <span><span class="txt">启用通知</span></span></label>
+          </div>
+
+          <div class="row">
+            <div class="field">
+              <label for="tgToken">Bot Token</label>
+              <input id="tgToken" type="text" placeholder="123456:ABC-DEF...（留空不修改）">
+              <div class="hint">向 @BotFather 创建机器人后获得</div>
+            </div>
+            <div class="field">
+              <label for="tgChat">Chat ID</label>
+              <input id="tgChat" type="text" placeholder="如 123456789 或 -1001234567890">
+              <div class="hint">多个 Chat ID 用英文逗号分隔</div>
+            </div>
+          </div>
+
+          <div class="row">
+            <div class="field">
+              <label for="tgApiBase">API 地址</label>
+              <input id="tgApiBase" type="text" placeholder="https://api.telegram.org">
+              <div class="hint">服务器无法直连 Telegram 时可填自建反代地址</div>
+            </div>
+            <div class="field">
+              <label for="tgCooldown">同类通知冷却（秒）</label>
+              <input id="tgCooldown" type="number" min="0" step="60" placeholder="600">
+              <div class="hint">同一事件在该时间内只发一次，避免轰炸</div>
+            </div>
+          </div>
+
+          <div class="section-label">通知事件</div>
+          <div class="grid cols-2" id="tgEvents"></div>
+
+          <div class="section-label">预警阈值</div>
+          <div class="row">
+            <div class="field">
+              <label for="thTraffic">流量预警（%）</label>
+              <input id="thTraffic" type="text" placeholder="80,95">
+              <div class="hint">配额用量达到该比例时提醒，逗号分隔</div>
+            </div>
+            <div class="field">
+              <label for="thCPU">CPU 负载（%）</label>
+              <input id="thCPU" type="number" min="0" max="100" step="1">
+            </div>
+            <div class="field">
+              <label for="thMem">内存占用（%）</label>
+              <input id="thMem" type="number" min="0" max="100" step="1">
+            </div>
+            <div class="field">
+              <label for="thDisk">磁盘占用（%）</label>
+              <input id="thDisk" type="number" min="0" max="100" step="1">
+            </div>
+          </div>
+          <div class="hint">阈值为 0 表示不提醒；负载类通知按上面设置的冷却时间限频。</div>
+        </div>
+      </section>
+
+      <!-- 系统 -->
+      <section id="view-system" class="view hidden">
+        <div class="card">
+          <div class="card-head">
+            <div>
+              <h2>面板访问</h2>
+              <div class="desc">修改端口或访问路径后需要重启面板才能生效</div>
+            </div>
+            <div class="btn-group">
+              <button class="btn secondary sm" id="sysRestartBtn">重启面板</button>
+              <button class="btn sm" id="sysSaveBtn">保存</button>
+            </div>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label for="sysListen">监听地址</label>
+              <input id="sysListen" type="text" placeholder=":8787">
+              <div class="hint">格式 <span class="mono">:端口</span> 或 <span class="mono">0.0.0.0:端口</span></div>
+            </div>
+            <div class="field">
+              <label for="sysBasePath">访问路径</label>
+              <input id="sysBasePath" type="text" placeholder="/panel（留空为根路径）">
+              <div class="hint">例如填 <span class="mono">/panel</span>，访问地址变为 <span class="mono">http://IP:端口/panel/</span></div>
+            </div>
+          </div>
+          <div class="notice" id="sysAccessInfo"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <div>
+              <h2>服务器地址</h2>
+              <div class="desc">用于生成客户端链接；云服务器请填公网 IP 或域名</div>
+            </div>
+            <button class="btn sm" id="saveHostBtn">保存</button>
+          </div>
+          <div class="field">
+            <input id="setHost" type="text" placeholder="自动探测，如 1.2.3.4 或 relay.example.com">
+            <div class="hint">留空则自动探测公网 IP。填内网 IP 会导致客户端无法连接。</div>
+          </div>
+
+          <div class="section-label">统计设置</div>
+          <div class="row">
+            <div class="field">
+              <label for="setSample">采样间隔（秒）</label>
+              <input id="setSample" type="number" min="5" max="3600">
+            </div>
+            <div class="field">
+              <label for="setRetention">明细保留（天）</label>
+              <input id="setRetention" type="number" min="1" max="3650">
+            </div>
+          </div>
+          <button class="btn secondary sm" id="saveStatsBtn">保存统计设置</button>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <div><h2>gost 进程</h2><div class="desc" id="gostPaths"></div></div>
+            <div class="btn-group">
+              <button class="btn secondary sm" id="gostLogsBtn">查看日志</button>
+              <button class="btn secondary sm" id="gostRestartBtn">重启 gost</button>
+            </div>
+          </div>
+          <div class="kv" id="gostInfo"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <div><h2>账号安全</h2><div class="desc">修改面板登录密码</div></div>
+            <button class="btn sm" id="savePwBtn">修改密码</button>
+          </div>
+          <div class="row">
+            <div class="field"><label for="pwOld">原密码</label><input id="pwOld" type="password"></div>
+            <div class="field"><label for="pwNew">新密码（至少 6 位）</label><input id="pwNew" type="password"></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><div><h2>关于</h2></div></div>
+          <div class="kv" id="aboutInfo"></div>
+        </div>
+      </section>
+    </div>
+  </main>
+</div>
+
+<div id="modal" class="modal hidden"></div>
+<div id="toast" class="toast hidden"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

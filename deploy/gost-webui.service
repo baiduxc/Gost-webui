@@ -1,0 +1,18 @@
+[Unit]
+Description=GOST 中转面板 (gost relay panel)
+Documentation=https://github.com/go-gost/gost
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/gost-webui
+ExecStart=/opt/gost-webui/bin/gost-webui -c /etc/gost-webui/panel.yml
+Restart=always
+RestartSec=3
+LimitNOFILE=1048576
+KillMode=control-group
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target

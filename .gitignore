@@ -1,0 +1,7 @@
+bin/
+.gost-src/
+panel.dev.yml
+data/
+gost-quota.json
+dist/
+*.log

@@ -1,0 +1,19 @@
+# 面板配置示例（本地开发用）
+listen: ":8787"
+data_dir: "./data"
+log_dir: "./data/logs"
+public_host: ""
+sample_seconds: 15
+retention_days: 90
+
+admin:
+  username: "admin"
+  password: "admin12345"
+
+gost:
+  bin: "./bin/gost"
+  config_file: "./data/gost.yml"
+  api_addr: "127.0.0.1:18080"
+  api_username: "gost"
+  api_password: "devsecret"
+  log_file: "./data/logs/gost.log"
