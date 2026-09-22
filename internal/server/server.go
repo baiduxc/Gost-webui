@@ -85,6 +85,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/nodes/{id}/stats", s.auth(s.handleNodeStats))
 	s.mux.HandleFunc("GET /api/nodes/{id}/link", s.auth(s.handleNodeLink))
 	s.mux.HandleFunc("GET /api/nodes/{id}/qrcode", s.auth(s.handleQRCode))
+	s.mux.HandleFunc("GET /api/nodes/{id}/deploy", s.auth(s.handleNodeDeploy))
 
 	s.mux.HandleFunc("POST /api/parse", s.auth(s.handleParseLink))
 	s.mux.HandleFunc("POST /api/test-connect", s.auth(s.handleTestConnect))
@@ -415,4 +416,22 @@ func randomPort(min, max int) int {
 		return min
 	}
 	return min + int(n.Int64())
+}
+
+// randomPassword 生成 n 位 URL 安全的随机密码（不含 +/= 等需转义字符）。
+func randomPassword(n int) string {
+	const alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	if n <= 0 {
+		n = 20
+	}
+	b := make([]byte, n)
+	max := big.NewInt(int64(len(alphabet)))
+	for i := range b {
+		idx, err := rand.Int(rand.Reader, max)
+		if err != nil {
+			idx = big.NewInt(int64(i % len(alphabet)))
+		}
+		b[i] = alphabet[idx.Int64()]
+	}
+	return string(b)
 }

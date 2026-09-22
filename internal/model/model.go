@@ -37,6 +37,13 @@ type Node struct {
 	SNI  string `json:"sni,omitempty"`
 	Host string `json:"host,omitempty"`
 
+	// Mode 为节点类型：link（粘贴落地机链接，默认）/ gost（落地机用 GOST 自建 ss 服务）。
+	// 空值视为 link，兼容历史节点。
+	Mode string `json:"mode,omitempty"`
+	// GostCipher / GostPassword 仅 gost 模式使用（落地机 ss 服务的加密方式与密码）。
+	GostCipher   string `json:"gostCipher,omitempty"`
+	GostPassword string `json:"gostPassword,omitempty"`
+
 	Quota QuotaSpec `json:"quota"`
 	Rate  RateSpec  `json:"rate"`
 	// ConnLimit 是并发连接数限制，0 表示不限。

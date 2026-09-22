@@ -254,3 +254,27 @@ func TestInvalid(t *testing.T) {
 		}
 	}
 }
+
+// TestParseSSSynthesizedGost 验证 GOST 体系合成的 SIP002 ss 链接
+// （RawURLEncoding 无填充）能被解析，且改写到中转机后凭据与备注保留。
+func TestParseSSSynthesizedGost(t *testing.T) {
+	cred := base64.RawURLEncoding.EncodeToString([]byte("aes-256-gcm:pw123"))
+	raw := "ss://" + cred + "@1.2.3.4:8388#GOST%E8%8A%82%E7%82%B9"
+	info, err := Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Scheme != "ss" || info.Host != "1.2.3.4" || info.Port != 8388 {
+		t.Fatalf("%+v", info)
+	}
+	out, err := info.Rewrite("5.6.7.8", 30000, "GOST-中转", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, cred+"@5.6.7.8:30000") {
+		t.Fatalf("凭据/地址改写错误: %s", out)
+	}
+	if !strings.Contains(out, "GOST-") {
+		t.Fatalf("备注丢失: %s", out)
+	}
+}

@@ -417,7 +417,7 @@ function renderNodes() {
     <tbody>${nodes.map(n => `
       <tr>
         <td><b>${esc(n.name)}</b>${n.udp ? ' <span class="tag">TCP+UDP</span>' : ''}</td>
-        <td><span class="tag">${esc(n.protocol || '—')}</span></td>
+        <td><span class="tag">${esc(n.protocol || '—')}</span>${n.mode === 'gost' ? ' <span class="tag">GOST</span>' : ''}</td>
         <td class="mono">${n.listenPort}</td>
         <td class="mono muted">${esc(n.targetHost)}:${n.targetPort}</td>
         <td>${statusTag(n.enabled, n.live && n.live.quotaBlocked)}</td>
@@ -497,21 +497,64 @@ function openNodeForm(node) {
   const isEdit = !!node;
   const q = (node && node.quota) || { enabled: false, period: 'monthly', bytes: 0, direction: 'total' };
   const rate = (node && node.rate) || { enabled: false, inBps: 0, outBps: 0 };
+  const isGost = !!(node && node.mode === 'gost');
+  const initMode = isGost ? 'gost' : 'link';
+  const gc = (isGost && node.gostCipher) || 'aes-256-gcm';
+  const cipherOpt = (v) => `<option value="${v}"${gc === v ? ' selected' : ''}>${v}</option>`;
 
   openModal(`
     <button class="modal-close" onclick="closeModal()">×</button>
     <h2>${isEdit ? '编辑节点' : '添加节点'}</h2>
 
+    <div class="tabs" id="nodeModeTabs" style="margin-bottom:16px">
+      <button type="button" data-mode="link" class="${initMode === 'link' ? 'active' : ''}">粘贴链接</button>
+      <button type="button" data-mode="gost" class="${initMode === 'gost' ? 'active' : ''}">GOST 体系</button>
+    </div>
+
+    <div id="modeLink" class="${initMode === 'link' ? '' : 'hidden'}">
     <div class="field">
       <label>落地机 v2rayN 链接</label>
-      <textarea id="f-link" placeholder="粘贴 vmess:// / vless:// / trojan:// / ss:// / hysteria2:// / tuic:// 链接">${esc(node ? node.landingLink : '')}</textarea>
+      <textarea id="f-link" placeholder="粘贴 vmess:// / vless:// / trojan:// / ss:// / hysteria2:// / tuic:// 链接">${esc(!isGost && node ? node.landingLink : '')}</textarea>
       <div class="hint">粘贴落地机节点的分享链接，面板自动解析协议、地址与鉴权参数</div>
+      <div class="hint">纯透传模式：面板只把落地机链接的地址端口换成中转机，其余参数（UUID/SNI/Reality 公钥/flow 等）原样保留，加密握手端到端直达落地机。</div>
       <div class="btn-group" style="margin-top:12px">
         <button class="btn secondary sm" id="testBtn">测试落地机连通性</button>
         <span class="hint" id="testResult" style="margin:0"></span>
       </div>
     </div>
     <div id="parseBox"></div>
+    </div>
+
+    <div id="modeGost" class="${initMode === 'gost' ? '' : 'hidden'}">
+      <div class="notice">落地机只需安装 GOST 并运行下方生成的 Shadowsocks 服务，无需 Xray/sing-box；中转机对其做纯 TCP 透传，客户端 ss 握手端到端直达落地机。保存后会给出落地机一键部署命令。</div>
+      <div class="row">
+        <div class="field">
+          <label>落地机公网 IP / 域名</label>
+          <input id="f-ghost-host" type="text" value="${esc(isGost ? node.targetHost : '')}" placeholder="如 1.2.3.4 或 land.example.com">
+        </div>
+        <div class="field">
+          <label>落地机端口</label>
+          <input id="f-ghost-port" type="number" min="1" max="65535" value="${isGost ? node.targetPort : ''}" placeholder="如 8388">
+        </div>
+      </div>
+      <div class="row">
+        <div class="field">
+          <label>加密方式</label>
+          <select id="f-ghost-cipher">
+            ${cipherOpt('aes-256-gcm')}
+            ${cipherOpt('aes-128-gcm')}
+            ${cipherOpt('chacha20-ietf-poly1305')}
+          </select>
+        </div>
+        <div class="field">
+          <label>密码</label>
+          <div class="row tight">
+            <input id="f-ghost-pass" type="text" value="${esc(isGost ? node.gostPassword : '')}" placeholder="留空自动生成">
+            <button class="btn secondary sm" id="ghostRandBtn" style="flex:0 0 auto">随机</button>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <div class="row">
       <div class="field">
@@ -532,7 +575,7 @@ function openNodeForm(node) {
         <span><span class="txt">同时转发 UDP</span><span class="desc">hysteria2 / tuic / KCP / QUIC 等协议必须开启</span></span></label>
     </div>
 
-    <details>
+    <details id="advOverride" class="${initMode === 'link' ? '' : 'hidden'}">
       <summary class="hint" style="cursor:pointer">高级：SNI / Host 覆盖（一般无需修改）</summary>
       <div class="row" style="margin-top:12px">
         <div class="field"><label>SNI 覆盖</label><input id="f-sni" type="text" value="${esc(node ? node.sni || '' : '')}" placeholder="留空自动"></div>
@@ -597,6 +640,17 @@ function openNodeForm(node) {
   `, true);
 
   $('#f-link').addEventListener('input', debounce(() => parseLink(true), 500));
+  $$('#nodeModeTabs button').forEach(b => {
+    b.onclick = () => {
+      const mode = b.dataset.mode;
+      $$('#nodeModeTabs button').forEach(x => x.classList.toggle('active', x === b));
+      const isLink = mode === 'link';
+      $('#modeLink').classList.toggle('hidden', !isLink);
+      $('#advOverride').classList.toggle('hidden', !isLink);
+      $('#modeGost').classList.toggle('hidden', isLink);
+    };
+  });
+  $('#ghostRandBtn').onclick = () => { $('#f-ghost-pass').value = randPass(20); };
   $('#randPortBtn').onclick = async () => {
     try { const r = await api('api/ports/free'); $('#f-port').value = r.port; }
     catch (e) { toast(e.message, 'err'); }
@@ -615,8 +669,18 @@ function openNodeForm(node) {
       el.className = r.ok ? 'hint' : 'hint error-text';
     } catch (e) { el.textContent = e.message; el.className = 'hint error-text'; }
   };
-  if (node) parseLink(false);
+  if (node && initMode === 'link') parseLink(false);
   $('#saveNodeBtn').onclick = () => saveNode(node);
+}
+
+// randPass 生成前端展示用的随机密码（留空时后端也会自动生成）。
+function randPass(n) {
+  const alphabet = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  const buf = new Uint32Array(n);
+  (window.crypto || window.msCrypto).getRandomValues(buf);
+  let s = '';
+  for (let i = 0; i < n; i++) s += alphabet[buf[i] % alphabet.length];
+  return s;
 }
 
 function debounce(fn, ms) {
@@ -646,8 +710,8 @@ async function parseLink(autofill) {
 
 async function saveNode(node) {
   const btn = $('#saveNodeBtn');
-  const link = $('#f-link').value.trim();
-  if (!link) { toast('请填写落地机链接', 'err'); return; }
+  const activeTab = $('#nodeModeTabs button.active');
+  const mode = activeTab ? activeTab.dataset.mode : 'link';
   const quotaEnabled = $('#f-quota').checked;
   const quotaSize = parseFloat($('#f-quotaSize').value || '0');
   const quotaUnit = parseInt($('#f-quotaUnit').value || '1024', 10);
@@ -656,26 +720,49 @@ async function saveNode(node) {
   const rateOut = parseFloat($('#f-rateOut').value || '0');
   if (quotaEnabled && !(quotaSize > 0)) { toast('请填写有效的流量额度', 'err'); return; }
 
-  const body = {
-    link,
+  const quota = {
+    enabled: quotaEnabled,
+    period: $('#f-period').value,
+    bytes: quotaEnabled ? Math.round(quotaSize * quotaUnit * 1024 * 1024) : 0,
+    direction: $('#f-direction').value,
+  };
+  const rate = {
+    enabled: rateEnabled,
+    inBps: rateEnabled ? Math.round(rateIn * 1e6 / 8) : 0,
+    outBps: rateEnabled ? Math.round(rateOut * 1e6 / 8) : 0,
+  };
+  const common = {
     name: $('#f-name').value.trim(),
     listenPort: parseInt($('#f-port').value || '0', 10) || 0,
     udp: $('#f-udp').checked,
-    sni: $('#f-sni').value.trim(),
-    host: $('#f-host').value.trim(),
     connLimit: parseInt($('#f-connLimit').value || '0', 10) || 0,
-    quota: {
-      enabled: quotaEnabled,
-      period: $('#f-period').value,
-      bytes: quotaEnabled ? Math.round(quotaSize * quotaUnit * 1024 * 1024) : 0,
-      direction: $('#f-direction').value,
-    },
-    rate: {
-      enabled: rateEnabled,
-      inBps: rateEnabled ? Math.round(rateIn * 1e6 / 8) : 0,
-      outBps: rateEnabled ? Math.round(rateOut * 1e6 / 8) : 0,
-    },
+    quota,
+    rate,
   };
+
+  let body;
+  if (mode === 'gost') {
+    const th = $('#f-ghost-host').value.trim();
+    const tp = parseInt($('#f-ghost-port').value || '0', 10) || 0;
+    if (!th) { toast('请填写落地机公网 IP / 域名', 'err'); return; }
+    if (!(tp > 0 && tp <= 65535)) { toast('请填写有效的落地机端口', 'err'); return; }
+    body = Object.assign({
+      mode: 'gost',
+      targetHost: th,
+      targetPort: tp,
+      gostCipher: $('#f-ghost-cipher').value,
+      gostPassword: $('#f-ghost-pass').value.trim(),
+    }, common);
+  } else {
+    const link = $('#f-link').value.trim();
+    if (!link) { toast('请填写落地机链接', 'err'); return; }
+    body = Object.assign({
+      mode: 'link',
+      link,
+      sni: $('#f-sni').value.trim(),
+      host: $('#f-host').value.trim(),
+    }, common);
+  }
   btn.disabled = true;
   try {
     const saved = node
@@ -705,8 +792,34 @@ async function openLinkModal(node) {
         <div class="hint" style="text-align:center">扫码导入</div>
       </div>
     </div>
+    ${node.mode === 'gost' ? '<div id="deployBox"></div>' : ''}
   `);
   $('#copyLinkBtn').onclick = () => copyText(r.url);
+  if (node.mode === 'gost') renderDeploy(node, '#deployBox');
+}
+
+// renderDeploy 拉取并渲染 GOST 体系节点的落地机部署命令与步骤。
+async function renderDeploy(node, sel) {
+  const box = $(sel);
+  if (!box) return;
+  box.innerHTML = '<div class="loading">加载落地机部署命令…</div>';
+  let d;
+  try { d = await api(`api/nodes/${node.id}/deploy`); }
+  catch (e) { box.innerHTML = `<div class="notice err">${esc(e.message)}</div>`; return; }
+  box.innerHTML = `
+    <div class="section-label">落地机部署（GOST 体系）</div>
+    <div class="notice">在落地机安装并运行 GOST 的 Shadowsocks 服务即可，无需 Xray。加密 <b>${esc(d.cipher)}</b> · 端口 <b>${d.port}</b>${d.udp ? ' · TCP+UDP' : ' · TCP'}。</div>
+    <div class="hint" style="margin-top:12px">操作步骤</div>
+    <div class="notice">${(d.steps || []).map(s => esc(s)).join('<br>')}</div>
+    <div class="hint" style="margin-top:12px">启动命令（前台直接运行）</div>
+    <div class="code-box">${esc(d.runCommand)}</div>
+    <button class="btn secondary sm" id="copyRunBtn" style="margin-top:8px">${icon('copy')} 复制启动命令</button>
+    <div class="hint" style="margin-top:16px">保存为配置文件（推荐，配合 systemd 常驻）</div>
+    <div class="code-box">${esc(d.saveCommand)}</div>
+    <button class="btn secondary sm" id="copySaveBtn" style="margin-top:8px">${icon('copy')} 复制保存命令</button>
+  `;
+  $('#copyRunBtn').onclick = () => copyText(d.runCommand);
+  $('#copySaveBtn').onclick = () => copyText(d.saveCommand);
 }
 
 async function openDetail(node) {
@@ -773,7 +886,8 @@ async function openDetail(node) {
       <div style="display:flex;gap:24px;margin-top:16px;align-items:flex-start;flex-wrap:wrap">
         <div class="qr"><img id="detailQR" src="${BASE}api/nodes/${node.id}/qrcode?t=${Date.now()}" alt="二维码"></div>
         <div class="hint">扫码或在客户端粘贴链接导入<br>连接地址 <span class="mono">${esc(state.publicHost)}:${node.listenPort}</span></div>
-      </div>`;
+      </div>
+      ${node.mode === 'gost' ? '<div id="detailDeploy"></div>' : ''}`;
     drawChart($('#detailChart'), r.points || []);
     $$('#detailBody .tabs button').forEach(b => {
       b.onclick = () => {
@@ -784,6 +898,7 @@ async function openDetail(node) {
     const lr = await api(`api/nodes/${node.id}/link`).catch(() => null);
     const el = $('#detailLink');
     if (el) el.textContent = lr && lr.url ? lr.url : '（无法生成：请在系统设置中填写服务器地址）';
+    if (node.mode === 'gost') renderDeploy(node, '#detailDeploy');
   };
   loadStats('7d');
 }

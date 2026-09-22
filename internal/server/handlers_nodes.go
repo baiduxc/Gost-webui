@@ -2,10 +2,12 @@ package server
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -27,7 +29,11 @@ type nodeInput struct {
 	SNI        string `json:"sni"`
 	Host       string `json:"host"`
 	Enabled    *bool  `json:"enabled"`
-	Quota      *struct {
+	// Mode 为 link（默认，粘贴落地机链接）/ gost（落地机用 GOST 自建 ss 服务）。
+	Mode         string `json:"mode"`
+	GostCipher   string `json:"gostCipher"`
+	GostPassword string `json:"gostPassword"`
+	Quota        *struct {
 		Enabled   bool   `json:"enabled"`
 		Period    string `json:"period"`
 		Bytes     int64  `json:"bytes"`
@@ -490,6 +496,34 @@ func (s *Server) handleTestConnect(w http.ResponseWriter, r *http.Request) {
 
 // buildNode 校验请求并生成节点对象；old 非空表示编辑。
 func (s *Server) buildNode(in *nodeInput, old *model.Node) (*model.Node, error) {
+	mode := strings.ToLower(strings.TrimSpace(in.Mode))
+	if mode == "" {
+		mode = "link"
+	}
+	switch mode {
+	case "gost":
+		return s.buildGostNode(in, old)
+	case "link":
+		return s.buildLinkNode(in, old)
+	default:
+		return nil, fmt.Errorf("未知的节点类型: %s", mode)
+	}
+}
+
+// newNodeBase 创建带 ID 的空节点。
+func newNodeBase(old *model.Node) *model.Node {
+	n := &model.Node{}
+	if old != nil {
+		n.ID = old.ID
+		n.Mode = old.Mode
+	} else {
+		n.ID = newID()
+	}
+	return n
+}
+
+// buildLinkNode 处理“粘贴落地机链接”模式。
+func (s *Server) buildLinkNode(in *nodeInput, old *model.Node) (*model.Node, error) {
 	if strings.TrimSpace(in.Link) == "" {
 		return nil, fmt.Errorf("请填写落地机的 v2rayN 链接")
 	}
@@ -498,12 +532,8 @@ func (s *Server) buildNode(in *nodeInput, old *model.Node) (*model.Node, error) 
 		return nil, fmt.Errorf("落地链接解析失败: %w", err)
 	}
 
-	n := &model.Node{}
-	if old != nil {
-		n.ID = old.ID
-	} else {
-		n.ID = newID()
-	}
+	n := newNodeBase(old)
+	n.Mode = "link"
 	n.LandingLink = strings.TrimSpace(in.Link)
 	n.Protocol = info.DisplayScheme()
 	n.Name = strings.TrimSpace(in.Name)
@@ -530,19 +560,94 @@ func (s *Server) buildNode(in *nodeInput, old *model.Node) (*model.Node, error) 
 		return nil, fmt.Errorf("落地地址无效: %s", n.TargetHost)
 	}
 
-	// UDP：默认按协议自动判断，用户可覆盖
+	n.SNI = strings.TrimSpace(in.SNI)
+	n.Host = strings.TrimSpace(in.Host)
+
+	if err := s.applyCommon(n, in, old, info.UDP); err != nil {
+		return nil, err
+	}
+	return n, nil
+}
+
+// gostCiphers 是落地机 ss 服务允许的加密方式。
+var gostCiphers = map[string]bool{
+	"aes-128-gcm":            true,
+	"aes-256-gcm":            true,
+	"chacha20-ietf-poly1305": true,
+}
+
+// buildGostNode 处理“GOST 体系”模式：落地机只跑 GOST 的 ss 服务，
+// 面板生成凭据并合成一条指向落地机的 ss 链接存入 LandingLink，
+// 中转机对其纯 TCP 透传。
+func (s *Server) buildGostNode(in *nodeInput, old *model.Node) (*model.Node, error) {
+	host := strings.TrimSpace(in.TargetHost)
+	if host == "" {
+		return nil, fmt.Errorf("请填写落地机的公网 IP 或域名")
+	}
+	if net.ParseIP(host) == nil && !validHostname(host) {
+		return nil, fmt.Errorf("落地地址无效: %s", host)
+	}
+	port := in.TargetPort
+	if port <= 0 || port > 65535 {
+		return nil, fmt.Errorf("落地端口无效")
+	}
+
+	cipher := strings.TrimSpace(in.GostCipher)
+	if cipher == "" {
+		cipher = "aes-256-gcm"
+	}
+	if !gostCiphers[cipher] {
+		return nil, fmt.Errorf("不支持的加密方式: %s", cipher)
+	}
+	password := strings.TrimSpace(in.GostPassword)
+	if password == "" {
+		if old != nil && old.Mode == "gost" && old.GostPassword != "" {
+			password = old.GostPassword
+		} else {
+			password = randomPassword(20)
+		}
+	}
+
+	n := newNodeBase(old)
+	n.Mode = "gost"
+	n.GostCipher = cipher
+	n.GostPassword = password
+	n.Protocol = "shadowsocks"
+	n.TargetHost = host
+	n.TargetPort = port
+
+	n.Name = strings.TrimSpace(in.Name)
+	if n.Name == "" {
+		n.Name = "GOST-" + host
+	}
+
+	// 合成指向落地机的 SIP002 ss 链接（客户端链接与二维码逻辑全部复用）。
+	cred := base64.RawURLEncoding.EncodeToString([]byte(cipher + ":" + password))
+	frag := strings.ReplaceAll(url.QueryEscape(n.Name), "+", "%20")
+	n.LandingLink = fmt.Sprintf("ss://%s@%s#%s", cred, net.JoinHostPort(host, strconv.Itoa(port)), frag)
+
+	if err := s.applyCommon(n, in, old, false); err != nil {
+		return nil, err
+	}
+	return n, nil
+}
+
+// applyCommon 填充 link 与 gost 两种模式共用的字段：
+// UDP、监听端口、并发限制、配额、限速、启用状态、配额计数起点。
+func (s *Server) applyCommon(n *model.Node, in *nodeInput, old *model.Node, defaultUDP bool) error {
+	// UDP：默认按协议/模式判断，用户可覆盖
 	if in.UDP != nil {
 		n.UDP = *in.UDP
 	} else if old != nil {
 		n.UDP = old.UDP
 	} else {
-		n.UDP = info.UDP
+		n.UDP = defaultUDP
 	}
 
 	// 监听端口
 	if in.ListenPort > 0 {
 		if in.ListenPort < 1 || in.ListenPort > 65535 {
-			return nil, fmt.Errorf("中转端口无效")
+			return fmt.Errorf("中转端口无效")
 		}
 		n.ListenPort = in.ListenPort
 	} else if old != nil && old.ListenPort > 0 {
@@ -550,19 +655,17 @@ func (s *Server) buildNode(in *nodeInput, old *model.Node) (*model.Node, error) 
 	} else {
 		p, err := pickFreePort()
 		if err != nil {
-			return nil, err
+			return err
 		}
 		n.ListenPort = p
 	}
 	// 端口占用检查（编辑自身时跳过）
 	if old == nil || old.ListenPort != n.ListenPort {
 		if !portFree(n.ListenPort) {
-			return nil, fmt.Errorf("端口 %d 已被占用", n.ListenPort)
+			return fmt.Errorf("端口 %d 已被占用", n.ListenPort)
 		}
 	}
 
-	n.SNI = strings.TrimSpace(in.SNI)
-	n.Host = strings.TrimSpace(in.Host)
 	n.ConnLimit = in.ConnLimit
 	if n.ConnLimit < 0 {
 		n.ConnLimit = 0
@@ -577,7 +680,7 @@ func (s *Server) buildNode(in *nodeInput, old *model.Node) (*model.Node, error) 
 			switch n.Quota.Period {
 			case "daily", "monthly", "total":
 			default:
-				return nil, fmt.Errorf("配额周期无效")
+				return fmt.Errorf("配额周期无效")
 			}
 			switch n.Quota.Direction {
 			case "in", "out":
@@ -585,7 +688,7 @@ func (s *Server) buildNode(in *nodeInput, old *model.Node) (*model.Node, error) 
 				n.Quota.Direction = "total"
 			}
 			if n.Quota.Bytes <= 0 {
-				return nil, fmt.Errorf("请填写有效的流量额度")
+				return fmt.Errorf("请填写有效的流量额度")
 			}
 		}
 	}
@@ -596,10 +699,10 @@ func (s *Server) buildNode(in *nodeInput, old *model.Node) (*model.Node, error) 
 		n.Rate.OutBps = in.Rate.OutBps
 		if n.Rate.Enabled {
 			if n.Rate.InBps < 0 || n.Rate.OutBps < 0 {
-				return nil, fmt.Errorf("限速值无效")
+				return fmt.Errorf("限速值无效")
 			}
 			if n.Rate.InBps == 0 && n.Rate.OutBps == 0 {
-				return nil, fmt.Errorf("请填写限速值")
+				return fmt.Errorf("请填写限速值")
 			}
 		}
 	}
@@ -619,7 +722,7 @@ func (s *Server) buildNode(in *nodeInput, old *model.Node) (*model.Node, error) 
 			n.QuotaSince = time.Now().Unix()
 		}
 	}
-	return n, nil
+	return nil
 }
 
 func newID() string {
