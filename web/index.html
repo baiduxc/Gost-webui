@@ -40,7 +40,6 @@
     <nav class="nav" id="nav">
       <a data-view="overview" class="active"><span data-icon="grid"></span>概览</a>
       <a data-view="nodes"><span data-icon="server"></span>节点</a>
-      <a data-view="sub"><span data-icon="rss"></span>订阅链接</a>
       <a data-view="notify"><span data-icon="bell"></span>通知提醒</a>
       <a data-view="system"><span data-icon="settings"></span>系统设置</a>
     </nav>
@@ -104,43 +103,6 @@
         </div>
         <div class="notice">中转机制：纯 TCP 四层透传。GOST 只做端口转发/流量管控，不额外做 TLS 封装；客户端的 Reality/VLESS 握手端到端直达落地机，落地机无需安装 GOST。</div>
         <div class="table-wrap" id="nodeTable"></div>
-      </section>
-
-      <!-- 订阅链接 -->
-      <section id="view-sub" class="view hidden">
-        <div id="subWarn"></div>
-        <div class="card">
-          <div class="card-head">
-            <div>
-              <h2>订阅链接</h2>
-              <div class="desc" id="subSummary">—</div>
-            </div>
-            <div class="btn-group">
-              <button class="btn secondary sm" id="subResetBtn">重置令牌</button>
-            </div>
-          </div>
-          <div class="notice">订阅聚合所有<b>已启用</b>节点，地址自动指向本中转机。通用链接按客户端 User-Agent 自动返回：<b>Clash 系返回 YAML 配置</b>，其它（v2rayN / Shadowrocket 等）返回 base64 链接列表。令牌即密钥，泄露后请「重置令牌」使旧链接失效。</div>
-
-          <div class="sub-grid">
-            <div class="sub-item">
-              <div class="hint">通用订阅（自动识别 Clash / v2rayN）</div>
-              <div class="code-box" id="subUniversal">—</div>
-              <div class="sub-qr">
-                <div class="qr"><img id="subUniversalQR" alt="通用订阅二维码"></div>
-                <button class="btn secondary sm" id="copyUniversalBtn">复制链接</button>
-              </div>
-            </div>
-            <div class="sub-item">
-              <div class="hint">Clash Meta / mihomo（强制 YAML 配置）</div>
-              <div class="code-box" id="subClash">—</div>
-              <div class="sub-qr">
-                <div class="qr"><img id="subClashQR" alt="Clash 订阅二维码"></div>
-                <button class="btn secondary sm" id="copyClashBtn">复制链接</button>
-              </div>
-            </div>
-          </div>
-          <div id="subSkipped"></div>
-        </div>
       </section>
 
       <!-- 通知 -->
@@ -268,6 +230,59 @@
             </div>
           </div>
           <button class="btn secondary sm" id="saveStatsBtn">保存统计设置</button>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <div>
+              <h2>订阅与证书</h2>
+              <div class="desc">独立订阅入口：在节点菜单生成专属链接；配置域名与证书后自动切 HTTPS</div>
+            </div>
+            <div class="btn-group">
+              <button class="btn secondary sm" id="issueCertBtn">申请/续期证书</button>
+              <button class="btn sm" id="saveSubBtn">保存</button>
+            </div>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label for="subPort">订阅端口</label>
+              <input id="subPort" type="number" min="1" max="65535" placeholder="8788">
+              <div class="hint">独立于面板端口的订阅监听端口，需在防火墙放通</div>
+            </div>
+            <div class="field">
+              <label for="subSuffix">路径后缀</label>
+              <input id="subSuffix" type="text" placeholder="/sub">
+              <div class="hint">订阅地址形如 <span class="mono">http(s)://主机:端口/后缀/令牌</span></div>
+            </div>
+          </div>
+          <div class="row">
+            <div class="field">
+              <label for="subDomain">订阅域名</label>
+              <input id="subDomain" type="text" placeholder="sub.example.com（留空则用 IP，HTTP）">
+              <div class="hint">填写域名并申请证书后，订阅自动切换为 HTTPS</div>
+            </div>
+            <div class="field">
+              <label for="subEmail">ACME 邮箱</label>
+              <input id="subEmail" type="text" placeholder="you@example.com">
+              <div class="hint">用于 Let's Encrypt 自动签发（域名需解析到本机、放通 80 端口）</div>
+            </div>
+          </div>
+          <div class="notice" id="subPreview"></div>
+          <div class="notice" id="certStatus"></div>
+
+          <div class="section-label">手动上传证书（可选，优先于 ACME）</div>
+          <div class="row">
+            <div class="field">
+              <label for="subTlsCert">证书 (PEM)</label>
+              <textarea id="subTlsCert" rows="4" placeholder="-----BEGIN CERTIFICATE-----（留空则用 ACME 自动证书）"></textarea>
+            </div>
+            <div class="field">
+              <label for="subTlsKey">私钥 (PEM)</label>
+              <textarea id="subTlsKey" rows="4" placeholder="-----BEGIN PRIVATE KEY-----"></textarea>
+            </div>
+          </div>
+          <div class="hint" id="manualCertHint" style="margin-top:8px"></div>
+          <button class="btn ghost sm" id="clearCertBtn" style="display:none">清除手动证书（切回 ACME）</button>
         </div>
 
         <div class="card">

@@ -55,7 +55,7 @@ let state = {
   system: null,
   settings: null,
   notify: null,
-  sub: null,
+  subConfig: null,
   publicHost: '',
   publicHostPrivate: false,
   lastParsed: null,
@@ -197,7 +197,7 @@ $('#nav').addEventListener('click', e => {
   if (a) setView(a.dataset.view);
 });
 
-const VIEW_TITLE = { overview: '概览', nodes: '节点', sub: '订阅链接', notify: '通知提醒', system: '系统设置' };
+const VIEW_TITLE = { overview: '概览', nodes: '节点', notify: '通知提醒', system: '系统设置' };
 function setView(view) {
   state.view = view;
   $$('#nav a').forEach(a => a.classList.toggle('active', a.dataset.view === view));
@@ -206,7 +206,6 @@ function setView(view) {
   $('#sidebar').classList.remove('open');
   if (view === 'overview') renderOverview();
   if (view === 'nodes') renderNodes();
-  if (view === 'sub') loadSubscription();
   if (view === 'notify') loadNotify();
   if (view === 'system') loadSystem();
 }
@@ -433,6 +432,7 @@ function renderNodes() {
             <button class="btn ghost sm dropdown-toggle" data-act="menu" data-id="${n.id}" title="操作">操作${icon('chevron', 'sm')}</button>
             <div class="dropdown-menu">
               <button data-act="copy" data-id="${n.id}">${icon('copy', 'sm')}复制链接</button>
+              <button data-act="sub" data-id="${n.id}">${icon('rss', 'sm')}订阅</button>
               <button data-act="detail" data-id="${n.id}">${icon('qr', 'sm')}详情</button>
               <button data-act="edit" data-id="${n.id}">${icon('edit', 'sm')}编辑</button>
               <button data-act="toggle" data-id="${n.id}">${icon('power', 'sm')}${n.enabled ? '停用' : '启用'}</button>
@@ -493,6 +493,7 @@ $('#nodeTable').addEventListener('click', async e => {
       break;
     }
     case 'detail': openDetail(node); break;
+    case 'sub': openNodeSub(node); break;
     case 'edit': openNodeForm(node); break;
     case 'toggle':
       try {
@@ -963,60 +964,58 @@ async function openDetail(node) {
   loadStats('7d');
 }
 
-/* ---------------- 订阅链接 ---------------- */
-async function loadSubscription() {
-  try {
-    state.sub = await api('api/subscription');
-    renderSubscription();
-  } catch (e) { toast(e.message, 'err'); }
-}
-
-// 订阅 URL 以浏览器当前访问面板的 origin + 访问路径前缀拼接，
-// 保证与用户正在使用的面板地址一致（含端口与 basePath）。
-function subURLs(token) {
-  const base = `${location.origin}${BASE}sub/${token}`;
-  return { universal: base, clash: `${base}/clash` };
-}
-
-function renderSubscription() {
-  const info = state.sub;
-  if (!info) return;
-  const { universal, clash } = subURLs(info.token);
-
-  $('#subSummary').textContent = `共 ${info.nodeTotal} 个节点，${info.nodeEnabled} 个已启用纳入订阅`;
-
-  $('#subWarn').innerHTML = info.publicHostPrivate
-    ? `<div class="notice warn">当前服务器地址 <b>${esc(info.publicHost || '未知')}</b> 是内网地址，外部客户端无法通过订阅连接。请到「系统设置 → 服务器地址」填写公网 IP 或域名。</div>`
-    : '';
-
-  $('#subUniversal').textContent = universal;
-  $('#subClash').textContent = clash;
-
+/* ---------------- 按节点订阅 ---------------- */
+// openNodeSub 拉取该节点专属订阅信息，弹窗展示链接 + 二维码 + 复制 + 重置令牌。
+async function openNodeSub(node) {
+  openModal(`
+    <button class="modal-close" onclick="closeModal()">×</button>
+    <h2>订阅 · ${esc(node.name)}</h2>
+    <div id="subBody"><div class="loading">加载中…</div></div>
+  `, true);
+  const body = $('#subBody');
+  const r = await api(`api/nodes/${node.id}/subscription`).catch(e => { toast(e.message, 'err'); return null; });
+  if (!r) { body.innerHTML = '<div class="notice warn">无法生成订阅链接。</div>'; return; }
   const t = Date.now();
-  $('#subUniversalQR').src = `${BASE}api/qrcode?text=${encodeURIComponent(universal)}&t=${t}`;
-  $('#subClashQR').src = `${BASE}api/qrcode?text=${encodeURIComponent(clash)}&t=${t}`;
-
-  const skipped = info.skipped || [];
-  if (info.nodeEnabled === 0) {
-    $('#subSkipped').innerHTML = `<div class="notice warn" style="margin-top:16px">当前没有已启用的节点，订阅内容为空。请先在「节点」页添加并启用节点。</div>`;
-  } else if (skipped.length) {
-    $('#subSkipped').innerHTML = `<div class="notice warn" style="margin-top:16px">以下节点未纳入 Clash 订阅（协议不支持或链接异常）：<br>${skipped.map(s => esc(s)).join('<br>')}</div>`;
-  } else {
-    $('#subSkipped').innerHTML = '';
-  }
-
-  $('#copyUniversalBtn').onclick = () => copyText(universal);
-  $('#copyClashBtn').onclick = () => copyText(clash);
+  const qr = u => `${BASE}api/qrcode?text=${encodeURIComponent(u)}&t=${t}`;
+  const schemeNote = r.scheme === 'https'
+    ? '已通过 <b>HTTPS</b> 提供（证书就绪）。'
+    : '当前为 <b>HTTP</b>。如需 HTTPS，请到「系统设置 → 订阅与证书」配置域名并申请证书。';
+  body.innerHTML = `
+    <div class="notice">${r.enabled ? '' : '<b>该节点已停用，订阅内容为空。</b> '}${schemeNote}</div>
+    <div class="sub-grid">
+      <div class="sub-item">
+        <div class="hint">通用订阅（自动识别 Clash / v2rayN）</div>
+        <div class="code-box">${esc(r.url)}</div>
+        <div class="sub-qr">
+          <div class="qr"><img src="${qr(r.url)}" alt="通用订阅二维码"></div>
+          <button class="btn secondary sm" data-copy="${esc(r.url)}">复制链接</button>
+        </div>
+      </div>
+      <div class="sub-item">
+        <div class="hint">Clash Meta / mihomo（强制 YAML）</div>
+        <div class="code-box">${esc(r.clashURL)}</div>
+        <div class="sub-qr">
+          <div class="qr"><img src="${qr(r.clashURL)}" alt="Clash 订阅二维码"></div>
+          <button class="btn secondary sm" data-copy="${esc(r.clashURL)}">复制链接</button>
+        </div>
+      </div>
+    </div>
+    <div class="section-label">通用直链（v2rayN / Shadowrocket）</div>
+    <div class="code-box">${esc(r.universalURL)}</div>
+    <div class="modal-actions">
+      <button class="btn secondary" id="subResetToken">重置令牌</button>
+      <button class="btn secondary" data-copy="${esc(r.universalURL)}">复制直链</button>
+    </div>`;
+  $$('#subBody [data-copy]').forEach(b => b.onclick = () => copyText(b.dataset.copy));
+  $('#subResetToken').onclick = async () => {
+    if (!confirm('重置该节点订阅令牌？旧的订阅链接与二维码将立即失效。')) return;
+    try {
+      await api(`api/nodes/${node.id}/subscription/reset`, { method: 'POST' });
+      toast('已重置订阅令牌');
+      openNodeSub(node);
+    } catch (e) { toast(e.message, 'err'); }
+  };
 }
-
-$('#subResetBtn').onclick = async () => {
-  if (!confirm('重置订阅令牌？所有旧的订阅链接与二维码将立即失效，客户端需重新导入。')) return;
-  try {
-    await api('api/subscription/reset', { method: 'POST' });
-    toast('已重置订阅令牌');
-    await loadSubscription();
-  } catch (e) { toast(e.message, 'err'); }
-};
 
 /* ---------------- 通知设置 ---------------- */
 async function loadNotify(force) {
@@ -1088,9 +1087,13 @@ $('#tgTestBtn').onclick = async () => {
 /* ---------------- 系统设置 ---------------- */
 async function loadSystem() {
   try {
-    const [sys, st] = await Promise.all([api('api/system'), api('api/settings')]);
+    const [sys, st, sc] = await Promise.all([
+      api('api/system'), api('api/settings'),
+      api('api/sub-config').catch(() => null),
+    ]);
     state.system = sys;
     state.settings = st;
+    state.subConfig = sc;
     renderSystem();
   } catch (e) { toast(e.message, 'err'); }
 }
@@ -1127,6 +1130,39 @@ function renderSystem() {
     <div class="k">主机运行</div><div class="v">${fmtDuration(met.hostUptime)}</div>
     <div class="k">配置文件</div><div class="v mono">${esc(p.configFile || '')}</div>
     <div class="k">面板账号</div><div class="v mono">${esc(st.username || 'admin')}</div>`;
+
+  renderSubConfig();
+}
+
+// renderSubConfig 渲染「订阅与证书」卡片（出于安全不回填私钥）。
+function renderSubConfig() {
+  const sc = state.subConfig;
+  if (!sc) return;
+  const ae = document.activeElement;
+  if (ae !== $('#subPort')) $('#subPort').value = sc.port || 8788;
+  if (ae !== $('#subSuffix')) $('#subSuffix').value = sc.suffix || '/sub';
+  if (ae !== $('#subDomain')) $('#subDomain').value = sc.domain || '';
+  if (ae !== $('#subEmail')) $('#subEmail').value = sc.email || '';
+
+  $('#subPreview').innerHTML = `订阅地址示例：<b class="mono">${esc(sc.sampleURL || '')}</b> · 当前协议 <b>${sc.tls ? 'HTTPS' : 'HTTP'}</b>`;
+
+  const c = sc.cert || {};
+  if (c.mode === 'manual' || c.mode === 'acme') {
+    $('#certStatus').innerHTML = `证书状态：<b>${c.mode === 'manual' ? '手动证书' : 'ACME 自动证书'}</b>`
+      + (c.domain ? ` · 域名 <b class="mono">${esc(c.domain)}</b>` : '')
+      + (c.notAfter ? ` · 到期 ${fmtTime(c.notAfter)}` : '')
+      + (c.issuer ? ` · 颁发者 ${esc(c.issuer)}` : '');
+  } else {
+    $('#certStatus').innerHTML = `证书状态：<b>未配置</b>（当前 HTTP）`
+      + (c.err ? ` · ${esc(c.err)}` : ' · 填写订阅域名与 ACME 邮箱后点击「申请/续期证书」');
+  }
+
+  $('#subTlsCert').placeholder = sc.hasManualCert ? '已配置（粘贴新 PEM 可更换）' : '-----BEGIN CERTIFICATE-----（留空则用 ACME 自动证书）';
+  $('#subTlsKey').placeholder = sc.hasManualCert ? '已配置（粘贴新私钥可更换）' : '-----BEGIN PRIVATE KEY-----';
+  $('#manualCertHint').textContent = sc.hasManualCert
+    ? '已配置手动证书（优先于 ACME）。如需更换，粘贴新的证书与私钥后保存；留空保存不会改动现有证书。'
+    : '留空则使用 ACME 自动证书；粘贴证书与私钥并保存后，手动证书将优先于 ACME。';
+  $('#clearCertBtn').style.display = sc.hasManualCert ? '' : 'none';
 }
 
 $('#sysSaveBtn').onclick = async () => {
@@ -1187,6 +1223,66 @@ $('#saveStatsBtn').onclick = async () => {
     state.system = null;
     await loadSystem();
   } catch (e) { toast(e.message, 'err'); }
+};
+
+// 保存订阅与证书配置（热生效，无需重启面板）。
+$('#saveSubBtn').onclick = async () => {
+  const certPem = $('#subTlsCert').value.trim();
+  const keyPem = $('#subTlsKey').value.trim();
+  if ((certPem && !keyPem) || (!certPem && keyPem)) {
+    toast('证书与私钥需同时填写', 'err');
+    return;
+  }
+  const body = {
+    port: parseInt($('#subPort').value, 10),
+    suffix: $('#subSuffix').value.trim(),
+    domain: $('#subDomain').value.trim(),
+    email: $('#subEmail').value.trim(),
+  };
+  // 仅在粘贴了新证书时提交，避免普通保存清除已有手动证书。
+  if (certPem && keyPem) { body.tlsCert = certPem; body.tlsKey = keyPem; }
+  const btn = $('#saveSubBtn');
+  btn.disabled = true;
+  try {
+    state.subConfig = await api('api/sub-config', { method: 'PUT', body });
+    $('#subTlsCert').value = ''; $('#subTlsKey').value = '';
+    toast('已保存，订阅监听器已热更新');
+    renderSubConfig();
+  } catch (e) { toast(e.message, 'err'); }
+  finally { btn.disabled = false; }
+};
+
+// 清除手动证书，切回 ACME。
+$('#clearCertBtn').onclick = async () => {
+  if (!confirm('清除手动证书并切回 ACME 自动证书？')) return;
+  try {
+    state.subConfig = await api('api/sub-config', { method: 'PUT', body: { tlsCert: '', tlsKey: '' } });
+    $('#subTlsCert').value = ''; $('#subTlsKey').value = '';
+    toast('已清除手动证书');
+    renderSubConfig();
+  } catch (e) { toast(e.message, 'err'); }
+};
+
+// 申请/续期证书：先保存最新域名/邮箱，再触发 ACME 签发。
+$('#issueCertBtn').onclick = async () => {
+  const domain = $('#subDomain').value.trim();
+  const email = $('#subEmail').value.trim();
+  if (!domain || !email) { toast('请先填写订阅域名与 ACME 邮箱', 'err'); return; }
+  const btn = $('#issueCertBtn');
+  const old = btn.textContent;
+  btn.disabled = true; btn.textContent = '申请中…（可能需数十秒）';
+  try {
+    await api('api/sub-config', { method: 'PUT', body: {
+      port: parseInt($('#subPort').value, 10),
+      suffix: $('#subSuffix').value.trim(),
+      domain, email,
+    } });
+    const r = await api('api/cert/issue', { method: 'POST' });
+    if (r && r.config) state.subConfig = r.config;
+    toast('证书已签发/续期');
+    renderSubConfig();
+  } catch (e) { toast(e.message, 'err'); }
+  finally { btn.disabled = false; btn.textContent = old; }
 };
 
 $('#savePwBtn').onclick = async () => {

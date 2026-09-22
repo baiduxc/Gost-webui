@@ -522,8 +522,14 @@ func newNodeBase(old *model.Node) *model.Node {
 	if old != nil {
 		n.ID = old.ID
 		n.Mode = old.Mode
+		// 编辑时保留原有订阅令牌，避免每次保存都使订阅链接失效。
+		n.SubToken = old.SubToken
+		if n.SubToken == "" {
+			n.SubToken = randomPassword(24)
+		}
 	} else {
 		n.ID = newID()
+		n.SubToken = randomPassword(24)
 	}
 	return n
 }

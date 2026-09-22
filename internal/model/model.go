@@ -37,6 +37,9 @@ type Node struct {
 	SNI  string `json:"sni,omitempty"`
 	Host string `json:"host,omitempty"`
 
+	// SubToken 是该节点的专属订阅令牌，用于公开订阅入口按令牌定位节点。
+	SubToken string `json:"subToken,omitempty"`
+
 	// Mode 为节点类型：link（粘贴落地机链接，默认）/ gost（落地机用 GOST 自建 ss 服务）。
 	// 空值视为 link，兼容历史节点。
 	Mode string `json:"mode,omitempty"`

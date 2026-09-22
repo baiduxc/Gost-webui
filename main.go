@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"gost-webui/internal/alerts"
+	"gost-webui/internal/cert"
 	"gost-webui/internal/cli"
 	"gost-webui/internal/config"
 	"gost-webui/internal/controller"
@@ -28,7 +29,7 @@ import (
 	"gost-webui/internal/store"
 )
 
-const version = "1.3.0"
+const version = "1.4.0"
 
 //go:embed all:web
 var embeddedWeb embed.FS
@@ -174,6 +175,14 @@ func main() {
 	server.SetConfigPath(*confPath)
 	srv.SetRestartFunc(func() { restartPanel(mgr, logger) })
 
+	// 订阅 HTTPS 证书管理器：内置 ACME 自动签发/续期，缓存于 DataDir/certs。
+	certDir := filepath.Join(cfg.DataDir, "certs")
+	_ = os.MkdirAll(certDir, 0o700)
+	certProv := cert.New(logger, certDir)
+	srv.SetCertProvider(certProv)
+	srv.EnsureSubTokens()
+	certProv.Start(ctx)
+
 	httpSrv := &http.Server{
 		Addr:              cfg.Listen,
 		Handler:           srv.Handler(),
@@ -194,6 +203,9 @@ func main() {
 		}
 	}()
 
+	// 启动独立订阅监听器（HTTP/HTTPS，可配端口与后缀）。
+	srv.StartSubscription(ctx)
+
 	slog.Info("面板访问地址", "url", accessURL)
 	fmt.Printf("\n  面板地址: %s\n  用户名: %s\n  初始密码见配置文件: %s\n\n",
 		accessURL, srv.AdminUser(), *confPath)
@@ -208,6 +220,8 @@ func main() {
 	shutdownCtx, cancel2 := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel2()
 	_ = httpSrv.Shutdown(shutdownCtx)
+	srv.StopSubscription(shutdownCtx)
+	certProv.Close(shutdownCtx)
 	// 退出前最后采样一次，避免丢失最后一段流量（配额计数恢复依赖面板统计）
 	ctl.SampleOnce(shutdownCtx)
 	alertMgr.NotifyPanelStop(shutdownCtx)

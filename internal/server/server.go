@@ -2,6 +2,7 @@
 package server
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
@@ -17,6 +18,7 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
+	"gost-webui/internal/cert"
 	"gost-webui/internal/config"
 	"gost-webui/internal/controller"
 	"gost-webui/internal/store"
@@ -40,6 +42,12 @@ type Server struct {
 	failures map[string]*loginFailure
 	hostIP   string
 	hostTime time.Time
+
+	// 独立订阅监听器与证书管理器。
+	subMu    sync.Mutex
+	subSrv   *http.Server
+	subCtx   context.Context
+	certProv *cert.Provider
 }
 
 // New 创建服务。
@@ -106,16 +114,15 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/gost/logs", s.auth(s.handleGostLogs))
 	s.mux.HandleFunc("GET /api/ports/free", s.auth(s.handleFreePort))
 
-	// 订阅管理（需登录）
-	s.mux.HandleFunc("GET /api/subscription", s.auth(s.handleSubscriptionInfo))
-	s.mux.HandleFunc("POST /api/subscription/reset", s.auth(s.handleSubscriptionReset))
+	// 按节点订阅管理（需登录）
+	s.mux.HandleFunc("GET /api/nodes/{id}/subscription", s.auth(s.handleNodeSubscription))
+	s.mux.HandleFunc("POST /api/nodes/{id}/subscription/reset", s.auth(s.handleNodeSubscriptionReset))
 	s.mux.HandleFunc("GET /api/qrcode", s.auth(s.handleQRText))
 
-	// 公开订阅入口：客户端直接拉取，无需登录，靠令牌鉴权。
-	// /sub/{token} 按 User-Agent 自动返回 Clash YAML 或通用 base64 链接。
-	s.mux.HandleFunc("GET /sub/{token}", s.handleSubFetch)
-	s.mux.HandleFunc("GET /sub/{token}/clash", s.handleSubClash)
-	s.mux.HandleFunc("GET /sub/{token}/universal", s.handleSubUniversal)
+	// 订阅与证书配置（需登录）
+	s.mux.HandleFunc("GET /api/sub-config", s.auth(s.handleSubConfigGet))
+	s.mux.HandleFunc("PUT /api/sub-config", s.auth(s.handleSubConfigPut))
+	s.mux.HandleFunc("POST /api/cert/issue", s.auth(s.handleCertIssue))
 
 	s.mux.HandleFunc("/", s.handleStatic)
 }
