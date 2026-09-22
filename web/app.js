@@ -1,4 +1,4 @@
-/* GOST 面板 · 前端逻辑（极简黑白灰设计体系） */
+/* GOST 面板 · 前端逻辑 · 幽谷灵境 */
 'use strict';
 
 /* ---------------- 基础 ---------------- */
@@ -50,6 +50,7 @@ const icon = (name, cls = '') =>
 /* ---------------- 状态 ---------------- */
 let state = {
   view: 'overview',
+  selectedNodeId: null,
   nodes: [],
   overview: null,
   system: null,
@@ -139,12 +140,12 @@ const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&a
 function applyTheme(t) {
   document.documentElement.dataset.theme = t;
   localStorage.setItem('gp_theme', t);
-  $('#themeBtn').innerHTML = `<span class="icon">${t === 'dark' ? '' : ''}</span>`;
   $('#themeBtn').innerHTML = icon(t === 'dark' ? 'sun' : 'moon');
+  $('#themeBtn').setAttribute('aria-label', t === 'dark' ? '切换浅色主题' : '切换深色主题');
   if (state.overview && state.view === 'overview') renderOverview();
 }
 function initTheme() {
-  applyTheme(localStorage.getItem('gp_theme') || 'light');
+  applyTheme(localStorage.getItem('gp_theme') || 'dark');
 }
 
 /* ---------------- 登录 ---------------- */
@@ -194,15 +195,18 @@ $('#themeBtn').onclick = () => applyTheme(document.documentElement.dataset.theme
 /* ---------------- 视图 ---------------- */
 $('#nav').addEventListener('click', e => {
   const a = e.target.closest('a[data-view]');
-  if (a) setView(a.dataset.view);
+  if (a) { e.preventDefault(); setView(a.dataset.view); }
 });
 
-const VIEW_TITLE = { overview: '概览', nodes: '节点', notify: '通知提醒', system: '系统设置' };
+const VIEW_TITLE = { overview: '网络概览', nodes: '节点管理', notify: '通知提醒', system: '系统设置' };
+const VIEW_SUBTITLE = { overview: '观流量起落，守每一程连接。', nodes: '连接有序，流转自如。', notify: '重要的消息，自会如期而至。', system: '静心调校，让连接安稳如常。' };
 function setView(view) {
   state.view = view;
   $$('#nav a').forEach(a => a.classList.toggle('active', a.dataset.view === view));
   $$('.view').forEach(v => v.classList.toggle('hidden', v.id !== 'view-' + view));
   $('#viewTitle').textContent = VIEW_TITLE[view] || '';
+  $('#viewSubtitle').textContent = VIEW_SUBTITLE[view] || '';
+  $$('#nav a').forEach(a => a.setAttribute('aria-current', a.dataset.view === view ? 'page' : 'false'));
   $('#sidebar').classList.remove('open');
   if (view === 'overview') renderOverview();
   if (view === 'nodes') renderNodes();
@@ -236,7 +240,7 @@ function renderStatusBar() {
   $('#gostDot').className = 'status-dot ' + (ok ? 'ok' : 'bad');
   $('#gostText').textContent = ok ? `gost 运行中 · PID ${g.pid || '—'}` : (g.running ? 'gost 异常' : 'gost 未运行');
   $('#hostChip').textContent = state.publicHost || '未检测到地址';
-  $('#brandSub').textContent = `节点 ${state.nodes.length} 个`;
+  $('#brandSub').textContent = `/ ${state.nodes.length} 节点`;
 }
 
 function renderHostWarn() {
@@ -275,7 +279,7 @@ function renderOverview() {
       <th>节点</th><th>状态</th><th style="width:38%">用量</th><th class="right">本月流量</th>
       </tr></thead><tbody>${top.map(x => {
         const sum = (x.in || 0) + (x.out || 0);
-        const pct = Math.max(2, Math.round(sum / max * 100));
+        const pct = Math.max(0, Math.round(sum / max * 100));
         return `<tr>
           <td>${esc(x.name)}</td>
           <td>${statusTag(x.enabled, x.blocked)}</td>
@@ -315,7 +319,7 @@ function statusTag(enabled, blocked) {
   return '<span class="status-inline"><span class="status-dot ok"></span>运行中</span>';
 }
 
-/* 单色图表：纯色线条 + 浅色实心填充（无渐变） */
+/* 流量图表：翡翠上行、淡金下行 */
 function drawChart(canvas, points) {
   if (!canvas) return;
   const dpr = window.devicePixelRatio || 1;
@@ -331,9 +335,9 @@ function drawChart(canvas, points) {
   const cAccent = css.getPropertyValue('--color-accent').trim() || '#1a1a1a';
   const cTertiary = css.getPropertyValue('--color-text-tertiary').trim() || '#888';
   const cBorderLight = css.getPropertyValue('--color-border-light').trim() || '#eee';
-  const cTextPrimary = css.getPropertyValue('--color-text-primary').trim() || '#1a1a1a';
+  const cGold = css.getPropertyValue('--color-gold').trim() || cTertiary;
 
-  const padL = 62, padR = 8, padT = 12, padB = 28;
+  const padL = 62, padR = 26, padT = 12, padB = 28;
   const cw = w - padL - padR, ch = h - padT - padB;
 
   if (!points.length) {
@@ -382,7 +386,7 @@ function drawChart(canvas, points) {
     ctx.globalAlpha = 1;
   };
   series('in', cAccent);
-  series('out', cTertiary);
+  series('out', cGold);
 
   ctx.textAlign = 'center';
   ctx.fillStyle = cTertiary;
@@ -406,43 +410,55 @@ function niceCeil(v) {
 function renderNodes() {
   const wrap = $('#nodeTable');
   const nodes = state.nodes;
-  $('#nodesSummary').textContent = `共 ${nodes.length} 个节点`
-    + (state.publicHost ? ` · 客户端连接地址 ${state.publicHost}` : ' · 未检测到服务器地址');
+  const active = nodes.filter(n => n.enabled && !(n.live && n.live.quotaBlocked)).length;
+  $('#nodesSummary').textContent = `${nodes.length} 个节点 · ${active} 个已启用 · 本月 ${fmtBytes(nodes.reduce((sum, n) => sum + (n.monthIn || 0) + (n.monthOut || 0), 0))}`;
+  if (!nodes.some(n => n.id === state.selectedNodeId)) state.selectedNodeId = nodes[0]?.id || null;
   if (!nodes.length) {
-    wrap.innerHTML = '<div class="empty">还没有节点，点击右上角「添加节点」开始</div>';
+    wrap.innerHTML = '<div class="empty"><span class="empty-title">此间尚无连接</span><p>添加第一个节点，开启你的中转之旅。</p><button class="btn secondary" data-act="add">添加节点</button></div>';
+    renderNodeInspector();
     return;
   }
   wrap.innerHTML = `<table>
-    <thead><tr>
-      <th>备注名</th><th>协议</th><th>监听端口</th><th>落地机</th><th>状态</th>
-      <th>今日</th><th>本月</th><th style="min-width:150px">流量配额</th><th class="right">操作</th>
-    </tr></thead>
-    <tbody>${nodes.map(n => `
-      <tr>
-        <td><b>${esc(n.name)}</b>${n.udp ? ' <span class="tag">TCP+UDP</span>' : ''}</td>
-        <td><span class="tag">${esc(n.protocol || '—')}</span>${n.mode === 'gost' ? ' <span class="tag">GOST</span>' : ''}</td>
-        <td class="mono">${n.listenPort}</td>
-        <td class="mono muted">${esc(n.targetHost)}:${n.targetPort}</td>
-        <td>${statusTag(n.enabled, n.live && n.live.quotaBlocked)}</td>
-        <td class="mono">${fmtBytes((n.todayIn || 0) + (n.todayOut || 0))}</td>
-        <td class="mono">${fmtBytes((n.monthIn || 0) + (n.monthOut || 0))}</td>
-        <td>${quotaCell(n)}</td>
-        <td class="ops right">
-          <div class="dropdown">
-            <button class="btn ghost sm dropdown-toggle" data-act="menu" data-id="${n.id}" title="操作">操作${icon('chevron', 'sm')}</button>
-            <div class="dropdown-menu">
-              <button data-act="copy" data-id="${n.id}">${icon('copy', 'sm')}复制链接</button>
-              <button data-act="sub" data-id="${n.id}">${icon('rss', 'sm')}订阅</button>
-              <button data-act="detail" data-id="${n.id}">${icon('qr', 'sm')}详情</button>
-              <button data-act="edit" data-id="${n.id}">${icon('edit', 'sm')}编辑</button>
-              <button data-act="toggle" data-id="${n.id}">${icon('power', 'sm')}${n.enabled ? '停用' : '启用'}</button>
-              <button data-act="del" data-id="${n.id}" class="danger">${icon('trash', 'sm')}删除</button>
-            </div>
-          </div>
-        </td>
-      </tr>`).join('')}
-    </tbody></table>`;
+    <thead><tr><th>节点名称 / 落地机</th><th>监听端口</th><th>本月用量 / 配额</th><th>状态</th><th class="right">操作</th></tr></thead>
+    <tbody>${nodes.map(n => `<tr class="${n.id === state.selectedNodeId ? 'selected' : ''}">
+      <td><button class="node-select" data-act="select" data-id="${esc(n.id)}" aria-pressed="${n.id === state.selectedNodeId}">${icon('server')}<span><b>${esc(n.name)}</b><small>${esc(n.protocol || 'TCP')}${n.mode === 'gost' ? ' · GOST' : ''}${n.udp ? ' · TCP+UDP' : ''} / ${esc(n.targetHost)}:${n.targetPort}</small></span></button></td>
+      <td class="mono">${n.listenPort}</td>
+      <td class="node-quota"><span class="mono">${fmtBytes((n.monthIn || 0) + (n.monthOut || 0))}</span>${quotaCell(n)}</td>
+      <td><button class="node-toggle" data-act="toggle" data-id="${esc(n.id)}" role="switch" aria-checked="${!!n.enabled}" aria-label="${n.enabled ? '停用' : '启用'}${esc(n.name)}"><span class="toggle-track"></span></button>${statusTag(n.enabled, n.live && n.live.quotaBlocked)}</td>
+      <td class="ops right"><div class="dropdown">
+        <button class="btn ghost sm dropdown-toggle" data-act="menu" data-id="${esc(n.id)}" aria-label="${esc(n.name)}的操作" aria-expanded="false">操作${icon('chevron', 'sm')}</button>
+        <div class="dropdown-menu">
+          <button data-act="copy" data-id="${esc(n.id)}">${icon('copy')}复制链接</button>
+          <button data-act="sub" data-id="${esc(n.id)}">${icon('rss')}订阅</button>
+          <button data-act="detail" data-id="${esc(n.id)}">${icon('qr')}详情</button>
+          <button data-act="edit" data-id="${esc(n.id)}">${icon('edit')}编辑</button>
+          <button data-act="toggle" data-id="${esc(n.id)}">${icon('power')}${n.enabled ? '停用' : '启用'}</button>
+          <button data-act="del" data-id="${esc(n.id)}" class="danger">${icon('trash')}删除</button>
+        </div>
+      </div></td>
+    </tr>`).join('')}</tbody></table>`;
+  renderNodeInspector();
 }
+
+function renderNodeInspector() {
+  const n = state.nodes.find(n => n.id === state.selectedNodeId);
+  const panel = $('#nodeInspector');
+  if (!n) { panel.innerHTML = '<div class="empty"><span class="empty-title">静候连接</span><p>节点的状态与用量<br>将在这里一目了然。</p></div>'; return; }
+  panel.innerHTML = `<div class="inspector-heading"><span class="eyebrow">NODE / 连接详情</span><h2>${esc(n.name)}</h2>${statusTag(n.enabled, n.live && n.live.quotaBlocked)}</div>
+    <dl class="node-facts"><div><dt>监听端口</dt><dd>${n.listenPort}</dd></div><div><dt>当前连接</dt><dd>${n.live?.currentConns || 0}</dd></div><div><dt>传输协议</dt><dd>${esc(n.protocol || 'TCP')}${n.udp ? ' / UDP' : ''}</dd></div><div><dt>今日上行</dt><dd>${fmtBytes(n.todayIn)}</dd></div><div><dt>今日下行</dt><dd>${fmtBytes(n.todayOut)}</dd></div></dl>
+    <div class="inspector-quota"><div class="desc">流量配额</div>${quotaCell(n)}</div>
+    <dl class="node-facts"><div><dt>本月用量</dt><dd>${fmtBytes((n.monthIn || 0) + (n.monthOut || 0))}</dd></div><div><dt>创建时间</dt><dd>${n.createdAt ? fmtTime(n.createdAt) : '—'}</dd></div></dl>
+    <div class="inspector-actions"><button class="btn secondary" data-inspect="copy">${icon('copy')}复制链接</button><button class="btn secondary" data-inspect="edit">${icon('edit')}编辑节点</button></div>`;
+}
+
+$('#nodeInspector').addEventListener('click', async e => {
+  const btn = e.target.closest('button[data-inspect]');
+  const node = state.nodes.find(n => n.id === state.selectedNodeId);
+  if (!btn || !node) return;
+  if (btn.dataset.inspect === 'edit') { openNodeForm(node); return; }
+  try { const r = await api(`api/nodes/${node.id}/link`); if (r?.url) await copyText(r.url); }
+  catch (err) { toast(err.message, 'err'); }
+});
 
 function quotaCell(n) {
   if (!n.quota || !n.quota.enabled || !n.quota.bytes) return '<span class="tertiary">不限</span>';
@@ -452,13 +468,15 @@ function quotaCell(n) {
   const cls = pct >= 95 ? 'bad' : pct >= 80 ? 'warn' : '';
   const period = { daily: '每日', monthly: '每月', total: '总量' }[n.quota.period] || '';
   return `<div class="mono" style="font-size:12px">${fmtBytes(used)} / ${fmtBytes(n.quota.bytes)} · ${period}</div>
-    <div class="meter"><i class="${cls}" style="width:${Math.max(2, pct)}%"></i></div>`;
+    <div class="meter"><i class="${cls}" style="width:${Math.max(0, pct)}%"></i></div>`;
 }
 
 $('#nodeTable').addEventListener('click', async e => {
   const btn = e.target.closest('button[data-act]');
   if (!btn) return;
   const id = btn.dataset.id;
+  if (btn.dataset.act === 'add') { openNodeForm(null); return; }
+  if (btn.dataset.act === 'select') { state.selectedNodeId = id; renderNodes(); return; }
 
   // 下拉菜单开合
   if (btn.dataset.act === 'menu') {
@@ -468,6 +486,7 @@ $('#nodeTable').addEventListener('click', async e => {
     closeAllDropdowns();
     if (!wasOpen) {
       dd.classList.add('open');
+      btn.setAttribute('aria-expanded', 'true');
       const menu = dd.querySelector('.dropdown-menu');
       const rect = btn.getBoundingClientRect();
       const mw = menu.offsetWidth || 132;
@@ -516,7 +535,7 @@ $('#addNodeBtn').onclick = () => openNodeForm(null);
 
 // 点击表格以外区域时关闭所有下拉菜单
 function closeAllDropdowns() {
-  $$('.dropdown.open').forEach(d => d.classList.remove('open'));
+  $$('.dropdown.open').forEach(d => { d.classList.remove('open'); d.querySelector('.dropdown-toggle')?.setAttribute('aria-expanded', 'false'); });
 }
 document.addEventListener('click', closeAllDropdowns);
 // 滚动/缩放时菜单（fixed 定位）会脱离按钮，直接关闭
@@ -524,16 +543,27 @@ window.addEventListener('resize', closeAllDropdowns);
 window.addEventListener('scroll', closeAllDropdowns, true);
 
 /* ---------------- 弹窗 ---------------- */
+let modalPreviousFocus = null;
 function openModal(html, wide) {
   const m = $('#modal');
+  if (m.classList.contains('hidden')) modalPreviousFocus = document.activeElement;
   m.innerHTML = `<div class="modal-box${wide ? ' wide' : ''}">${html}</div>`;
   m.classList.remove('hidden');
+  m.setAttribute('role', 'dialog');
+  m.setAttribute('aria-modal', 'true');
+  m.setAttribute('aria-label', m.querySelector('h2')?.textContent || '详情');
   m.onclick = e => { if (e.target === m) closeModal(); };
   renderIcons(m);
+  $('#app').inert = true;
+  m.querySelector('.modal-close')?.setAttribute('aria-label', '关闭弹窗');
+  m.querySelector('button, input, select, textarea')?.focus();
 }
 function closeModal() {
+  if ($('#modal').classList.contains('hidden')) return;
   $('#modal').classList.add('hidden');
   $('#modal').innerHTML = '';
+  $('#app').inert = false;
+  if (modalPreviousFocus?.isConnected) modalPreviousFocus.focus();
 }
 
 /* ---------------- 添加/编辑节点 ---------------- */
@@ -1318,6 +1348,19 @@ $('#gostLogsBtn').onclick = async () => {
     `, true);
   } catch (e) { toast(e.message, 'err'); }
 };
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') { closeModal(); closeAllDropdowns(); }
+  if (e.key === 'Tab' && !$('#modal').classList.contains('hidden')) {
+    const items = $$('button, input, select, textarea, a[href], [tabindex="0"]', $('#modal'))
+      .filter(el => !el.disabled && el.getClientRects().length);
+    const first = items[0], last = items[items.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); }
+  }
+});
+let chartResizeTimer;
+window.addEventListener('resize', () => { clearTimeout(chartResizeTimer); chartResizeTimer = setTimeout(() => { if (state.view === 'overview' && state.overview) renderOverview(); }, 120); });
 
 /* ---------------- 启动 ---------------- */
 init();

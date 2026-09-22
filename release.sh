@@ -25,7 +25,7 @@ mkdir -p "$OUT"
 
 pack_source() {
   info "打包源码包（用于提交仓库 / 源码安装）…"
-  local files=(main.go go.mod go.sum install.sh uninstall.sh release.sh Makefile README.md DEVELOPMENT.md LICENSE THIRD_PARTY_LICENSES.md .gitignore panel.example.yml deploy internal web)
+  local files=(main.go go.mod go.sum install.sh uninstall.sh release.sh Makefile README.md CHANGELOG.md DEVELOPMENT.md LICENSE THIRD_PARTY_LICENSES.md .gitignore panel.example.yml deploy internal web)
   local exist=()
   for f in "${files[@]}"; do [ -e "$f" ] && exist+=("$f"); done
   tar czf "$OUT/${PKG}-${VERSION}-src.tar.gz" "${exist[@]}"

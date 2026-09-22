@@ -1,6 +1,6 @@
 GO ?= go
 BIN_DIR ?= bin
-VERSION ?= 1.0.0
+VERSION ?= $(shell sed -n 's/^var version = "\([^"]*\)"/\1/p' main.go)
 
 .PHONY: all build gost test vet clean run
 

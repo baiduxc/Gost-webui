@@ -1,18 +1,21 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-theme="light">
+<html lang="zh-CN" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Gost-WebUI</title>
 <link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="theme.css">
 </head>
 <body>
 
 <!-- 登录 -->
 <div id="login" class="login-wrap hidden">
+  <div class="login-intro"><span class="eyebrow">山水有相逢 · 连接无远近</span><h2>云深不知处<br>自有天地宽</h2><p>一方清境，万里相连。</p></div>
   <div class="login-card">
-    <div class="mark">GP</div>
-    <h1>Gost-WebUI</h1>
+    <div class="mark"><span data-icon="activity"></span></div>
+    <div class="eyebrow">GOST · TUNNEL MANAGER</div>
+    <h1>幽谷灵境</h1>
     <p class="sub">转发管理 · 流量管控 · 告警通知</p>
     <div class="field">
       <label for="loginUser">用户名</label>
@@ -31,27 +34,18 @@
 <div id="app" class="app hidden">
   <aside class="sidebar" id="sidebar">
     <div class="brand">
-      <div class="mark">GP</div>
+      <div class="mark"><span data-icon="activity"></span></div>
       <div>
         <div class="name">Gost-WebUI</div>
-        <div class="sub" id="brandSub">Relay Panel</div>
+        <div class="sub">幽谷灵境 <span id="brandSub"></span></div>
       </div>
     </div>
     <nav class="nav" id="nav">
-      <a data-view="overview" class="active"><span data-icon="grid"></span>概览</a>
-      <a data-view="nodes"><span data-icon="server"></span>节点</a>
-      <a data-view="notify"><span data-icon="bell"></span>通知提醒</a>
-      <a data-view="system"><span data-icon="settings"></span>系统设置</a>
+      <a href="#overview" data-view="overview" class="active"><span data-icon="grid"></span>概览</a>
+      <a href="#nodes" data-view="nodes"><span data-icon="server"></span>节点</a>
+      <a href="#notify" data-view="notify"><span data-icon="bell"></span>通知提醒</a>
+      <a href="#system" data-view="system"><span data-icon="settings"></span>系统设置</a>
     </nav>
-    <div class="sidebar-foot">
-      <span class="status-dot" id="gostDot"></span>
-      <span id="gostText">gost 状态检测中</span>
-    </div>
-  </aside>
-
-  <main>
-    <div class="topbar">
-      <h1 id="viewTitle">概览</h1>
       <div class="actions">
         <span class="chip" id="hostChip">—</span>
         <a class="btn ghost sm" href="https://github.com/baiduxc/Gost-webui" target="_blank" rel="noopener noreferrer" title="GitHub 仓库" aria-label="GitHub 仓库" style="text-decoration:none"><svg class="icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12z"/></svg></a>
@@ -59,6 +53,13 @@
         <button class="btn ghost sm" id="refreshBtn" title="刷新"><span data-icon="refresh"></span></button>
         <button class="btn ghost sm" id="logoutBtn">退出</button>
       </div>
+
+  </aside>
+
+  <main>
+    <div class="topbar">
+      <div class="hero-copy"><div class="eyebrow">GOST / RELAY CONSOLE</div><h1 id="viewTitle">网络概览</h1><p id="viewSubtitle">观流量起落，守每一程连接。</p><span class="hero-note">云深不知处，自有天地宽</span></div><div class="hero-poem" aria-hidden="true">静听山风<br>闲看云起<br>人间烟火小<br>自在长天阔</div>
+
     </div>
 
     <div class="content">
@@ -76,7 +77,7 @@
               <div class="desc" id="chartTotal">—</div>
             </div>
           </div>
-          <canvas id="chart" class="chart-box" height="160"></canvas>
+          <canvas id="chart" class="chart-box" height="160" role="img" aria-label="近30天上行和下行流量趋势"></canvas>
           <div class="chart-legend">
             <span><i class="swatch" style="background:var(--color-accent)"></i>上行</span>
             <span><i class="swatch" style="background:var(--color-text-tertiary)"></i>下行</span>
@@ -92,17 +93,17 @@
       <!-- 节点 -->
       <section id="view-nodes" class="view hidden">
         <div id="hostWarn"></div>
-        <div class="card-head">
-          <div>
-            <h2>节点</h2>
-            <div class="desc" id="nodesSummary">—</div>
+        <div class="nodes-layout">
+          <div class="node-workspace card">
+            <div class="card-head nodes-toolbar">
+              <div><h2>我的节点</h2><div class="desc" id="nodesSummary">正在加载节点…</div></div>
+              <button class="btn" id="addNodeBtn"><span data-icon="plus"></span>添加节点</button>
+            </div>
+            <div class="table-wrap" id="nodeTable"></div>
+            <details class="relay-note"><summary>关于中转连接</summary><p>纯 TCP 四层透传。GOST 负责端口转发与流量管控；Reality / VLESS 握手端到端直达落地机，落地机无需安装 GOST。</p></details>
           </div>
-          <div class="btn-group">
-            <button class="btn" id="addNodeBtn"><span data-icon="plus"></span>添加节点</button>
-          </div>
+          <aside class="card node-inspector" id="nodeInspector" aria-label="选中节点详情"><div class="empty">选择节点，查看连接详情</div></aside>
         </div>
-        <div class="notice">中转机制：纯 TCP 四层透传。GOST 只做端口转发/流量管控，不额外做 TLS 封装；客户端的 Reality/VLESS 握手端到端直达落地机，落地机无需安装 GOST。</div>
-        <div class="table-wrap" id="nodeTable"></div>
       </section>
 
       <!-- 通知 -->
@@ -313,11 +314,15 @@
         </div>
       </section>
     </div>
+    <footer class="app-footer"><span>山水有相逢 · 连接无远近</span>    <div class="footer-status">
+      <span class="status-dot" id="gostDot"></span>
+      <span id="gostText">gost 状态检测中</span>
+    </div><span>Gost-WebUI <i>幽谷灵境</i></span></footer>
   </main>
 </div>
 
 <div id="modal" class="modal hidden"></div>
-<div id="toast" class="toast hidden"></div>
+<div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 
 <script src="app.js"></script>
 </body>
