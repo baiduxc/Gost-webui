@@ -216,6 +216,30 @@ func (m *Manager) NotifyPanelStop(ctx context.Context) {
 	_ = m.Notify.Send(ctx, notify.EventPanelStop, "", text)
 }
 
+// nodeKind 返回节点类型的中文描述。
+func nodeKind(n *model.Node) string {
+	if n.Mode == "gost" {
+		return "GOST 体系"
+	}
+	return "中转链接"
+}
+
+// NotifyNodeAdded 面板新增节点通知。
+func (m *Manager) NotifyNodeAdded(ctx context.Context, n *model.Node) {
+	text := fmt.Sprintf("<b>[GOST 面板] 已新增节点</b>\n节点：%s\n类型：%s（%s）\n中转端口：%d\n落地：%s:%d\n时间：%s",
+		n.Name, nodeKind(n), n.Protocol, n.ListenPort, n.TargetHost, n.TargetPort,
+		time.Now().Format("2006-01-02 15:04:05"))
+	_ = m.Notify.Send(ctx, notify.EventNodeAdded, "", text)
+}
+
+// NotifyNodeDeleted 面板删除节点通知。
+func (m *Manager) NotifyNodeDeleted(ctx context.Context, n *model.Node) {
+	text := fmt.Sprintf("<b>[GOST 面板] 已删除节点</b>\n节点：%s\n类型：%s（%s）\n中转端口：%d\n落地：%s:%d\n时间：%s",
+		n.Name, nodeKind(n), n.Protocol, n.ListenPort, n.TargetHost, n.TargetPort,
+		time.Now().Format("2006-01-02 15:04:05"))
+	_ = m.Notify.Send(ctx, notify.EventNodeDeleted, "", text)
+}
+
 // ---------- 设置读取辅助 ----------
 
 func (m *Manager) get(key, def string) string {

@@ -809,21 +809,6 @@ print_summary() {
   echo "    卸载      bash ${PANEL_DIR}/install.sh --uninstall"
   echo "=================================================================="
   echo
-  if [ -z "$pub" ] || [ "$pub" != "$local_ip" ]; then
-    echo -e "  ${YELLOW}如果浏览器打不开上面地址，请依次检查：${RESET}"
-    echo "    1) 云服务器控制台 →「安全组/防火墙」放行 TCP ${PANEL_PORT} 端口"
-    echo "       （腾讯云/阿里云/华为云都要单独放行，建议只允许你的宽带 IP 访问）"
-    echo "    2) 本机防火墙：ufw allow ${PANEL_PORT}/tcp 或"
-    echo "       firewall-cmd --add-port=${PANEL_PORT}/tcp --permanent && firewall-cmd --reload"
-    echo "    3) 确认监听正常：ss -lntp | grep ${PANEL_PORT}（应为 0.0.0.0:${PANEL_PORT}）"
-    echo "    4) 确认公网 IP：curl -4 ip.sb / curl -4 ifconfig.me"
-    echo
-    echo "  提示：面板也能在「系统设置 → 服务器地址」里手动填写公网 IP 或域名。"
-    echo
-  fi
-  echo "  下一步：登录面板 → 添加节点 → 粘贴落地机的 v2rayN 链接"
-  echo "          面板会自动生成一条改好地址的链接，复制进客户端即可。"
-  echo
 }
 
 uninstall_all() {

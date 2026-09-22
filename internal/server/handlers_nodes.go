@@ -225,6 +225,9 @@ func (s *Server) handleCreateNode(w http.ResponseWriter, r *http.Request) {
 	if _, err := s.ctl.LoadNodes(); err != nil {
 		s.log.Warn("刷新节点缓存失败", "err", err)
 	}
+	if s.ctl.Alerts != nil {
+		go s.ctl.Alerts.NotifyNodeAdded(context.Background(), node)
+	}
 	writeJSON(w, http.StatusOK, s.buildView(node))
 }
 
@@ -282,6 +285,9 @@ func (s *Server) handleDeleteNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, _ = s.ctl.LoadNodes()
+	if s.ctl.Alerts != nil {
+		go s.ctl.Alerts.NotifyNodeDeleted(context.Background(), node)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 

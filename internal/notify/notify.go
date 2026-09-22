@@ -24,6 +24,8 @@ const (
 	EventLoadWarn     = "loadWarn"     // 服务器负载预警
 	EventPanelStart   = "panelStart"   // 面板启动
 	EventPanelStop    = "panelStop"    // 面板停止
+	EventNodeAdded    = "nodeAdded"    // 面板新增节点
+	EventNodeDeleted  = "nodeDeleted"  // 面板删除节点
 )
 
 // AllEvents 返回全部事件类型及中文名。
@@ -36,6 +38,8 @@ func AllEvents() map[string]string {
 		EventLoadWarn:     "服务器负载预警",
 		EventPanelStart:   "面板启动",
 		EventPanelStop:    "面板停止",
+		EventNodeAdded:    "新增节点",
+		EventNodeDeleted:  "删除节点",
 	}
 }
 

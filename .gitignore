@@ -1,5 +1,7 @@
 bin/
 .gost-src/
+.gocache/
+.gotmp/
 panel.dev.yml
 data/
 gost-quota.json

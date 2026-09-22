@@ -106,6 +106,17 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/gost/logs", s.auth(s.handleGostLogs))
 	s.mux.HandleFunc("GET /api/ports/free", s.auth(s.handleFreePort))
 
+	// 订阅管理（需登录）
+	s.mux.HandleFunc("GET /api/subscription", s.auth(s.handleSubscriptionInfo))
+	s.mux.HandleFunc("POST /api/subscription/reset", s.auth(s.handleSubscriptionReset))
+	s.mux.HandleFunc("GET /api/qrcode", s.auth(s.handleQRText))
+
+	// 公开订阅入口：客户端直接拉取，无需登录，靠令牌鉴权。
+	// /sub/{token} 按 User-Agent 自动返回 Clash YAML 或通用 base64 链接。
+	s.mux.HandleFunc("GET /sub/{token}", s.handleSubFetch)
+	s.mux.HandleFunc("GET /sub/{token}/clash", s.handleSubClash)
+	s.mux.HandleFunc("GET /sub/{token}/universal", s.handleSubUniversal)
+
 	s.mux.HandleFunc("/", s.handleStatic)
 }
 

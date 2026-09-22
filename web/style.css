@@ -35,7 +35,7 @@
   --space-2xl: 24px;
   --space-3xl: 32px;
   --space-4xl: 40px;
-  --page-max-width: 1200px;
+  --page-max-width: 1600px;
   --sidebar-width: 236px;
   --topbar-height: 60px;
 
@@ -379,7 +379,8 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
   backdrop-filter: blur(12px);
 }
 .topbar h1 { font-size: 1.125rem; font-weight: 700; margin: 0; }
-.topbar .actions { display: flex; align-items: center; gap: var(--space-md); }
+.topbar .actions { display: flex; align-items: center; gap: var(--space-xs); }
+.topbar .actions .btn.ghost { padding-left: 10px; padding-right: 10px; }
 .chip {
   font-size: var(--text-caption);
   color: var(--color-text-secondary);
@@ -669,6 +670,57 @@ pre.logs {
 }
 .section-label:first-child { margin-top: 0; }
 
+/* ---------- 下拉菜单（节点操作） ---------- */
+/* 用 fixed 定位，避开 .table-wrap 的 overflow 裁剪；坐标由 JS 按按钮位置计算 */
+.dropdown { position: relative; display: inline-block; }
+.dropdown-toggle { gap: 4px; }
+.dropdown-toggle .icon { width: 14px; height: 14px; }
+.dropdown-menu {
+  position: fixed;
+  min-width: 132px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  display: none;
+  flex-direction: column;
+  z-index: 50;
+}
+.dropdown.open .dropdown-menu { display: flex; }
+.dropdown-menu button {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--color-border-light);
+  color: var(--color-text-primary);
+  font-family: inherit;
+  font-size: var(--text-caption);
+  text-align: left;
+  padding: 9px 14px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.dropdown-menu button:last-child { border-bottom: none; }
+.dropdown-menu button:hover { background: var(--color-surface-secondary); }
+.dropdown-menu button.danger { color: var(--color-error); }
+.dropdown-menu button .icon { width: 14px; height: 14px; flex: 0 0 auto; }
+
+/* ---------- 订阅页 ---------- */
+.sub-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2xl);
+  margin-top: var(--space-lg);
+}
+.sub-item .code-box { max-height: none; }
+.sub-qr {
+  display: flex;
+  align-items: center;
+  gap: var(--space-lg);
+  margin-top: var(--space-md);
+  flex-wrap: wrap;
+}
+
 /* ---------- 响应式 ---------- */
 @media (max-width: 1100px) {
   .grid.cols-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -680,6 +732,7 @@ pre.logs {
   .content { padding: var(--space-xl) var(--space-lg) 80px; }
   .topbar { padding: 0 var(--space-lg); }
   .grid.cols-4, .grid.cols-3, .grid.cols-2 { grid-template-columns: minmax(0, 1fr); }
+  .sub-grid { grid-template-columns: minmax(0, 1fr); }
   .card { padding: var(--space-xl); }
   .modal-box { padding: var(--space-2xl); }
   .menu-btn { display: inline-flex !important; }

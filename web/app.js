@@ -33,6 +33,8 @@ const ICONS = {
   check: '<path d="M20 6L9 17l-5-5"/>',
   x: '<path d="M18 6L6 18M6 6l12 12"/>',
   activity: '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
+  rss: '<path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/><path d="M4.5 17.5h2.5V20H4.5z"/>',
+  chevron: '<path d="M6 9l6 6 6-6"/>',
 };
 
 function renderIcons(root = document) {
@@ -53,6 +55,7 @@ let state = {
   system: null,
   settings: null,
   notify: null,
+  sub: null,
   publicHost: '',
   publicHostPrivate: false,
   lastParsed: null,
@@ -194,7 +197,7 @@ $('#nav').addEventListener('click', e => {
   if (a) setView(a.dataset.view);
 });
 
-const VIEW_TITLE = { overview: '概览', nodes: '节点', notify: '通知提醒', system: '系统设置' };
+const VIEW_TITLE = { overview: '概览', nodes: '节点', sub: '订阅链接', notify: '通知提醒', system: '系统设置' };
 function setView(view) {
   state.view = view;
   $$('#nav a').forEach(a => a.classList.toggle('active', a.dataset.view === view));
@@ -203,8 +206,9 @@ function setView(view) {
   $('#sidebar').classList.remove('open');
   if (view === 'overview') renderOverview();
   if (view === 'nodes') renderNodes();
-  if (view === 'notify') renderNotify();
-  if (view === 'system') renderSystem();
+  if (view === 'sub') loadSubscription();
+  if (view === 'notify') loadNotify();
+  if (view === 'system') loadSystem();
 }
 
 /* ---------------- 数据刷新 ---------------- */
@@ -425,11 +429,16 @@ function renderNodes() {
         <td class="mono">${fmtBytes((n.monthIn || 0) + (n.monthOut || 0))}</td>
         <td>${quotaCell(n)}</td>
         <td class="ops right">
-          <button class="btn ghost" data-act="copy" data-id="${n.id}" title="复制链接">${icon('copy')}</button>
-          <button class="btn ghost" data-act="detail" data-id="${n.id}" title="详情">${icon('qr')}</button>
-          <button class="btn ghost" data-act="edit" data-id="${n.id}" title="编辑">${icon('edit')}</button>
-          <button class="btn ghost" data-act="toggle" data-id="${n.id}" title="${n.enabled ? '停用' : '启用'}">${icon('power')}</button>
-          <button class="btn ghost danger" data-act="del" data-id="${n.id}" title="删除">${icon('trash')}</button>
+          <div class="dropdown">
+            <button class="btn ghost sm dropdown-toggle" data-act="menu" data-id="${n.id}" title="操作">操作${icon('chevron', 'sm')}</button>
+            <div class="dropdown-menu">
+              <button data-act="copy" data-id="${n.id}">${icon('copy', 'sm')}复制链接</button>
+              <button data-act="detail" data-id="${n.id}">${icon('qr', 'sm')}详情</button>
+              <button data-act="edit" data-id="${n.id}">${icon('edit', 'sm')}编辑</button>
+              <button data-act="toggle" data-id="${n.id}">${icon('power', 'sm')}${n.enabled ? '停用' : '启用'}</button>
+              <button data-act="del" data-id="${n.id}" class="danger">${icon('trash', 'sm')}删除</button>
+            </div>
+          </div>
         </td>
       </tr>`).join('')}
     </tbody></table>`;
@@ -450,8 +459,33 @@ $('#nodeTable').addEventListener('click', async e => {
   const btn = e.target.closest('button[data-act]');
   if (!btn) return;
   const id = btn.dataset.id;
+
+  // 下拉菜单开合
+  if (btn.dataset.act === 'menu') {
+    e.stopPropagation();
+    const dd = btn.closest('.dropdown');
+    const wasOpen = dd.classList.contains('open');
+    closeAllDropdowns();
+    if (!wasOpen) {
+      dd.classList.add('open');
+      const menu = dd.querySelector('.dropdown-menu');
+      const rect = btn.getBoundingClientRect();
+      const mw = menu.offsetWidth || 132;
+      const mh = menu.offsetHeight || 0;
+      let left = rect.right - mw;
+      if (left < 8) left = 8;
+      if (left + mw > window.innerWidth - 8) left = window.innerWidth - mw - 8;
+      let top = rect.bottom + 4;
+      if (top + mh > window.innerHeight - 8) top = Math.max(8, rect.top - mh - 4);
+      menu.style.left = left + 'px';
+      menu.style.top = top + 'px';
+    }
+    return;
+  }
+
   const node = state.nodes.find(x => x.id === id);
   if (!node) return;
+  closeAllDropdowns();
   switch (btn.dataset.act) {
     case 'copy': {
       const r = await api(`api/nodes/${id}/link`).catch(err => { toast(err.message, 'err'); return null; });
@@ -478,6 +512,15 @@ $('#nodeTable').addEventListener('click', async e => {
   }
 });
 $('#addNodeBtn').onclick = () => openNodeForm(null);
+
+// 点击表格以外区域时关闭所有下拉菜单
+function closeAllDropdowns() {
+  $$('.dropdown.open').forEach(d => d.classList.remove('open'));
+}
+document.addEventListener('click', closeAllDropdowns);
+// 滚动/缩放时菜单（fixed 定位）会脱离按钮，直接关闭
+window.addEventListener('resize', closeAllDropdowns);
+window.addEventListener('scroll', closeAllDropdowns, true);
 
 /* ---------------- 弹窗 ---------------- */
 function openModal(html, wide) {
@@ -811,15 +854,32 @@ async function renderDeploy(node, sel) {
     <div class="notice">在落地机安装并运行 GOST 的 Shadowsocks 服务即可，无需 Xray。加密 <b>${esc(d.cipher)}</b> · 端口 <b>${d.port}</b>${d.udp ? ' · TCP+UDP' : ' · TCP'}。</div>
     <div class="hint" style="margin-top:12px">操作步骤</div>
     <div class="notice">${(d.steps || []).map(s => esc(s)).join('<br>')}</div>
-    <div class="hint" style="margin-top:12px">启动命令（前台直接运行）</div>
-    <div class="code-box">${esc(d.runCommand)}</div>
-    <button class="btn secondary sm" id="copyRunBtn" style="margin-top:8px">${icon('copy')} 复制启动命令</button>
-    <div class="hint" style="margin-top:16px">保存为配置文件（推荐，配合 systemd 常驻）</div>
+
+    <div class="hint" style="margin-top:16px">① 安装 GOST · 方式一：下载预编译二进制（自动识别架构）</div>
+    <div class="code-box">${esc(d.installBinaryCmd)}</div>
+    <button class="btn secondary sm" id="copyInstallBinBtn" style="margin-top:8px">${icon('copy')} 复制</button>
+
+    <div class="hint" style="margin-top:16px">① 安装 GOST · 方式二：官方安装脚本</div>
+    <div class="code-box">${esc(d.installScriptCmd)}</div>
+    <button class="btn secondary sm" id="copyInstallScriptBtn" style="margin-top:8px">${icon('copy')} 复制</button>
+
+    <div class="hint" style="margin-top:16px">② 保存 ss 服务配置到 ${esc(d.confPath)}</div>
     <div class="code-box">${esc(d.saveCommand)}</div>
-    <button class="btn secondary sm" id="copySaveBtn" style="margin-top:8px">${icon('copy')} 复制保存命令</button>
+    <button class="btn secondary sm" id="copySaveBtn" style="margin-top:8px">${icon('copy')} 复制</button>
+
+    <div class="hint" style="margin-top:16px">③ 注册为 systemd 后台服务（自动后台运行 + 开机自启）</div>
+    <div class="code-box">${esc(d.serviceCommand)}</div>
+    <button class="btn secondary sm" id="copyServiceBtn" style="margin-top:8px">${icon('copy')} 复制</button>
+
+    <div class="hint" style="margin-top:16px">（可选）前台临时运行，用于快速测试</div>
+    <div class="code-box">${esc(d.runCommand)}</div>
+    <button class="btn secondary sm" id="copyRunBtn" style="margin-top:8px">${icon('copy')} 复制</button>
   `;
-  $('#copyRunBtn').onclick = () => copyText(d.runCommand);
+  $('#copyInstallBinBtn').onclick = () => copyText(d.installBinaryCmd);
+  $('#copyInstallScriptBtn').onclick = () => copyText(d.installScriptCmd);
   $('#copySaveBtn').onclick = () => copyText(d.saveCommand);
+  $('#copyServiceBtn').onclick = () => copyText(d.serviceCommand);
+  $('#copyRunBtn').onclick = () => copyText(d.runCommand);
 }
 
 async function openDetail(node) {
@@ -880,7 +940,7 @@ async function openDetail(node) {
           <button data-range="30d">30 天</button>
         </div>
       </div>
-      <canvas id="detailChart" height="180" style="width:100%"></canvas>
+      <canvas id="detailChart" height="130" style="width:100%"></canvas>
       <div class="section-label">客户端链接</div>
       <div class="code-box" id="detailLink">加载中…</div>
       <div style="display:flex;gap:24px;margin-top:16px;align-items:flex-start;flex-wrap:wrap">
@@ -902,6 +962,61 @@ async function openDetail(node) {
   };
   loadStats('7d');
 }
+
+/* ---------------- 订阅链接 ---------------- */
+async function loadSubscription() {
+  try {
+    state.sub = await api('api/subscription');
+    renderSubscription();
+  } catch (e) { toast(e.message, 'err'); }
+}
+
+// 订阅 URL 以浏览器当前访问面板的 origin + 访问路径前缀拼接，
+// 保证与用户正在使用的面板地址一致（含端口与 basePath）。
+function subURLs(token) {
+  const base = `${location.origin}${BASE}sub/${token}`;
+  return { universal: base, clash: `${base}/clash` };
+}
+
+function renderSubscription() {
+  const info = state.sub;
+  if (!info) return;
+  const { universal, clash } = subURLs(info.token);
+
+  $('#subSummary').textContent = `共 ${info.nodeTotal} 个节点，${info.nodeEnabled} 个已启用纳入订阅`;
+
+  $('#subWarn').innerHTML = info.publicHostPrivate
+    ? `<div class="notice warn">当前服务器地址 <b>${esc(info.publicHost || '未知')}</b> 是内网地址，外部客户端无法通过订阅连接。请到「系统设置 → 服务器地址」填写公网 IP 或域名。</div>`
+    : '';
+
+  $('#subUniversal').textContent = universal;
+  $('#subClash').textContent = clash;
+
+  const t = Date.now();
+  $('#subUniversalQR').src = `${BASE}api/qrcode?text=${encodeURIComponent(universal)}&t=${t}`;
+  $('#subClashQR').src = `${BASE}api/qrcode?text=${encodeURIComponent(clash)}&t=${t}`;
+
+  const skipped = info.skipped || [];
+  if (info.nodeEnabled === 0) {
+    $('#subSkipped').innerHTML = `<div class="notice warn" style="margin-top:16px">当前没有已启用的节点，订阅内容为空。请先在「节点」页添加并启用节点。</div>`;
+  } else if (skipped.length) {
+    $('#subSkipped').innerHTML = `<div class="notice warn" style="margin-top:16px">以下节点未纳入 Clash 订阅（协议不支持或链接异常）：<br>${skipped.map(s => esc(s)).join('<br>')}</div>`;
+  } else {
+    $('#subSkipped').innerHTML = '';
+  }
+
+  $('#copyUniversalBtn').onclick = () => copyText(universal);
+  $('#copyClashBtn').onclick = () => copyText(clash);
+}
+
+$('#subResetBtn').onclick = async () => {
+  if (!confirm('重置订阅令牌？所有旧的订阅链接与二维码将立即失效，客户端需重新导入。')) return;
+  try {
+    await api('api/subscription/reset', { method: 'POST' });
+    toast('已重置订阅令牌');
+    await loadSubscription();
+  } catch (e) { toast(e.message, 'err'); }
+};
 
 /* ---------------- 通知设置 ---------------- */
 async function loadNotify(force) {

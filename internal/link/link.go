@@ -370,6 +370,261 @@ func (i *Info) rewriteURI(host string, port int, name, sni, hostHeader string) (
 	return sb.String(), nil
 }
 
+// ClashProxy 把已解析的链接转换为 Clash Meta（mihomo）的单个 proxy 配置。
+// server / port 直接取 Info 中的值（调用前应已通过 Rewrite 指向中转机），
+// 其余鉴权/传输参数沿用原链接。name 为空时回退到链接备注名。
+//
+// 支持 ss / vmess / vless / trojan / hysteria2 / tuic；其它协议返回错误，
+// 由调用方决定跳过。
+func (i *Info) ClashProxy(name string) (map[string]any, error) {
+	if name == "" {
+		name = i.Name
+	}
+	if name == "" {
+		name = i.Host
+	}
+	server := i.Host
+	port := i.Port
+
+	vals, _ := url.ParseQuery(i.rawQuery)
+	get := func(keys ...string) string {
+		for _, k := range keys {
+			if v := vals.Get(k); v != "" {
+				return v
+			}
+		}
+		return ""
+	}
+
+	switch i.Scheme {
+	case "ss":
+		return i.clashSS(name, server, port)
+	case "vmess":
+		return i.clashVmess(name, server, port)
+	case "vless":
+		return i.clashVless(name, server, port, get)
+	case "trojan", "trojan-go":
+		return i.clashTrojan(name, server, port, get)
+	case "hysteria2", "hy2":
+		return i.clashHysteria2(name, server, port, get)
+	case "tuic":
+		return i.clashTuic(name, server, port, get)
+	default:
+		return nil, fmt.Errorf("订阅暂不支持的协议: %s", i.Scheme)
+	}
+}
+
+// clashTransport 按传输层填充 network 与对应 opts（ws/grpc/h2）。
+func clashTransport(p map[string]any, network, path, hostHdr, grpcSvc string) {
+	switch strings.ToLower(network) {
+	case "ws", "websocket":
+		p["network"] = "ws"
+		opts := map[string]any{}
+		if path != "" {
+			opts["path"] = path
+		}
+		if hostHdr != "" {
+			opts["headers"] = map[string]any{"Host": hostHdr}
+		}
+		p["ws-opts"] = opts
+	case "grpc":
+		p["network"] = "grpc"
+		p["grpc-opts"] = map[string]any{"grpc-service-name": grpcSvc}
+	case "h2":
+		p["network"] = "h2"
+		opts := map[string]any{}
+		if path != "" {
+			opts["path"] = path
+		}
+		if hostHdr != "" {
+			opts["host"] = []string{hostHdr}
+		}
+		p["h2-opts"] = opts
+	}
+}
+
+func (i *Info) clashSS(name, server string, port int) (map[string]any, error) {
+	method, pass := "", ""
+	if i.legacySS != nil {
+		method, pass = i.legacySS.method, i.legacySS.pass
+	} else if i.userinfo != "" {
+		if b, err := decodeBase64Loose(i.userinfo); err == nil {
+			s := string(b)
+			if k := strings.IndexByte(s, ':'); k >= 0 {
+				method, pass = s[:k], s[k+1:]
+			}
+		}
+	}
+	if method == "" {
+		return nil, fmt.Errorf("ss 链接缺少加密方式")
+	}
+	return map[string]any{
+		"name": name, "type": "ss", "server": server, "port": port,
+		"cipher": method, "password": pass, "udp": true,
+	}, nil
+}
+
+func (i *Info) clashVmess(name, server string, port int) (map[string]any, error) {
+	m := i.vmess
+	if m == nil {
+		return nil, fmt.Errorf("vmess 链接解析不完整")
+	}
+	uuid, _ := m["id"].(string)
+	if uuid == "" {
+		return nil, fmt.Errorf("vmess 链接缺少 uuid")
+	}
+	alterID := toInt(m["aid"])
+	p := map[string]any{
+		"name": name, "type": "vmess", "server": server, "port": port,
+		"uuid": uuid, "alterId": alterID, "cipher": "auto", "udp": true,
+	}
+	if i.TLS {
+		p["tls"] = true
+		p["skip-cert-verify"] = false
+		sni := i.SNI
+		if sni == "" {
+			sni, _ = m["sni"].(string)
+		}
+		if sni != "" {
+			p["servername"] = sni
+		}
+	}
+	path, _ := m["path"].(string)
+	svcName, _ := m["serviceName"].(string)
+	clashTransport(p, i.Transport, path, i.HostHdr, svcName)
+	return p, nil
+}
+
+func (i *Info) clashVless(name, server string, port int, get func(...string) string) (map[string]any, error) {
+	uuid := strings.TrimSpace(i.userinfo)
+	if uuid == "" {
+		return nil, fmt.Errorf("vless 链接缺少 uuid")
+	}
+	p := map[string]any{
+		"name": name, "type": "vless", "server": server, "port": port,
+		"uuid": uuid, "udp": true,
+	}
+	if flow := get("flow"); flow != "" {
+		p["flow"] = flow
+	}
+	sec := strings.ToLower(get("security", "tls"))
+	if i.TLS || sec == "tls" || sec == "reality" || sec == "xtls" {
+		p["tls"] = true
+		p["skip-cert-verify"] = false
+		sni := i.SNI
+		if sni == "" {
+			sni = get("sni", "servername", "peer")
+		}
+		if sni != "" {
+			p["servername"] = sni
+		}
+		if fp := get("fp", "fingerprint"); fp != "" {
+			p["client-fingerprint"] = fp
+		}
+		if pbk := get("pbk"); pbk != "" {
+			ro := map[string]any{"public-key": pbk}
+			if sid := get("sid"); sid != "" {
+				ro["short-id"] = sid
+			}
+			p["reality-opts"] = ro
+		}
+	}
+	clashTransport(p, i.Transport, get("path"), i.HostHdr, get("serviceName", "serviceName"))
+	return p, nil
+}
+
+func (i *Info) clashTrojan(name, server string, port int, get func(...string) string) (map[string]any, error) {
+	pass := strings.TrimSpace(i.userinfo)
+	if pass == "" {
+		return nil, fmt.Errorf("trojan 链接缺少密码")
+	}
+	p := map[string]any{
+		"name": name, "type": "trojan", "server": server, "port": port,
+		"password": pass, "tls": true, "skip-cert-verify": false, "udp": true,
+	}
+	sni := i.SNI
+	if sni == "" {
+		sni = get("sni", "peer", "servername")
+	}
+	if sni != "" {
+		p["sni"] = sni
+	}
+	if fp := get("fp", "fingerprint"); fp != "" {
+		p["client-fingerprint"] = fp
+	}
+	clashTransport(p, i.Transport, get("path"), i.HostHdr, get("serviceName"))
+	return p, nil
+}
+
+func (i *Info) clashHysteria2(name, server string, port int, get func(...string) string) (map[string]any, error) {
+	pass := strings.TrimSpace(i.userinfo)
+	if pass == "" {
+		return nil, fmt.Errorf("hysteria2 链接缺少密码")
+	}
+	p := map[string]any{
+		"name": name, "type": "hysteria2", "server": server, "port": port,
+		"password": pass,
+	}
+	sni := i.SNI
+	if sni == "" {
+		sni = get("sni", "peer", "obfs-password")
+	}
+	if sni != "" {
+		p["sni"] = sni
+	}
+	if get("insecure") == "1" || strings.EqualFold(get("allowInsecure"), "true") {
+		p["skip-cert-verify"] = true
+	}
+	if obfs := get("obfs"); obfs != "" {
+		p["obfs"] = obfs
+		if op := get("obfs-password"); op != "" {
+			p["obfs-password"] = op
+		}
+	}
+	return p, nil
+}
+
+func (i *Info) clashTuic(name, server string, port int, get func(...string) string) (map[string]any, error) {
+	uuid, pass := "", ""
+	if ui := strings.TrimSpace(i.userinfo); ui != "" {
+		if k := strings.IndexByte(ui, ':'); k >= 0 {
+			uuid, pass = ui[:k], ui[k+1:]
+		} else {
+			uuid = ui
+		}
+	}
+	if uuid == "" {
+		return nil, fmt.Errorf("tuic 链接缺少 uuid")
+	}
+	p := map[string]any{
+		"name": name, "type": "tuic", "server": server, "port": port,
+		"uuid": uuid, "password": pass,
+	}
+	sni := i.SNI
+	if sni == "" {
+		sni = get("sni", "peer")
+	}
+	if sni != "" {
+		p["sni"] = sni
+	}
+	if alpn := get("alpn"); alpn != "" {
+		p["alpn"] = strings.Split(alpn, ",")
+	}
+	if v := get("congestion-controller"); v != "" {
+		p["congestion-controller"] = v
+	}
+	if v := get("udp-relay-mode"); v != "" {
+		p["udp-relay-mode"] = v
+	}
+	if get("disable-sni") == "1" || strings.EqualFold(get("disableSNI"), "true") {
+		p["disable-sni"] = true
+	}
+	if get("insecure") == "1" || strings.EqualFold(get("allowInsecure"), "true") {
+		p["skip-cert-verify"] = true
+	}
+	return p, nil
+}
+
 // ---------- 工具函数 ----------
 
 func isWS(transport string) bool {
