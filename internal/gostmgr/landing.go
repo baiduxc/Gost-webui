@@ -1,6 +1,14 @@
 package gostmgr
 
-import "fmt"
+import (
+	"fmt"
+	"net/url"
+	"strings"
+
+	"gopkg.in/yaml.v3"
+
+	"gost-webui/internal/model"
+)
 
 // BuildLandingSS 生成落地机上运行的 GOST Shadowsocks 服务配置与启动命令。
 //
@@ -39,6 +47,43 @@ func BuildLandingSS(id, cipher, password string, port int, udp bool) (yaml strin
 	return yaml, runCmd
 }
 
+// BuildLanding 生成远程落地机的完整 GOST 配置与临时启动命令。
+// 它与本机落地共用同一套服务生成器，避免两种部署方式出现协议差异。
+func BuildLanding(n *model.Node) (yamlText string, runCmd string, err error) {
+	if n == nil {
+		return "", "", fmt.Errorf("节点为空")
+	}
+	clone := *n
+	clone.GostLocal = true // 远程部署本身就是在目标机本地监听。
+	if err := ValidateGostNode(&clone); err != nil {
+		return "", "", err
+	}
+	port := n.TargetPort
+	if port <= 0 {
+		port = n.ListenPort
+	}
+	conf := struct {
+		Services []*Service `yaml:"services"`
+	}{Services: BuildGostProxyServices(&clone, port)}
+	var sb strings.Builder
+	enc := yaml.NewEncoder(&sb)
+	enc.SetIndent(2)
+	if err := enc.Encode(conf); err != nil {
+		return "", "", err
+	}
+	_ = enc.Close()
+
+	raw, err := GostClientURL(&clone, "", port)
+	if err != nil {
+		return "", "", err
+	}
+	if u, parseErr := url.Parse(raw); parseErr == nil {
+		u.Fragment = ""
+		raw = u.String()
+	}
+	return sb.String(), fmt.Sprintf("gost -L %q", raw), nil
+}
+
 // GostReleaseVersion 是落地机部署命令中固定使用的 GOST 发行版本。
 const GostReleaseVersion = "3.3.0"
 
@@ -64,14 +109,14 @@ func InstallScriptCmd() string {
 	return "bash <(curl -fsSL https://github.com/go-gost/gost/raw/master/install.sh) --install"
 }
 
-// BuildLandingService 生成把落地机 GOST ss 服务注册为 systemd 后台服务的命令，
+// BuildLandingService 生成把落地机 GOST 服务注册为 systemd 后台服务的命令，
 // 实现自动后台运行与开机自启。返回服务名与完整命令。
 func BuildLandingService(id, confPath string) (serviceName, cmd string) {
 	serviceName = "gost-" + id
 	unitPath := "/etc/systemd/system/" + serviceName + ".service"
 	cmd = fmt.Sprintf(`sudo tee %[1]s >/dev/null <<'EOF'
 [Unit]
-Description=GOST Shadowsocks service (node %[2]s)
+Description=GOST proxy service (node %[2]s)
 After=network-online.target
 Wants=network-online.target
 

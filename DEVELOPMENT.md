@@ -3,7 +3,7 @@
 > 本文件面向开发者/运维（架构、配置项、发布流程、排障）。
 > **面向使用者的安装说明请看 [README.md](README.md)。**
 
-基于 [gost](https://github.com/go-gost/gost) 的中转机 WebUI 面板：**中转机一键安装，落地机只粘贴一条 v2rayN 链接，客户端复制生成的新链接即可用**。
+基于 [gost](https://github.com/go-gost/gost) 的中转与落地 WebUI 面板：既可粘贴 v2rayN 链接做透明中转，也可由面板在本机或远程落地机创建 GOST 原生代理服务。
 自带流量统计、流量配额（超限自动暂停、到期自动恢复）、限速与连接数限制。
 
 ```
@@ -22,6 +22,8 @@
 - **粘贴即用**：粘贴落地机的 `vmess://` `vless://` `trojan://` `ss://` `hysteria2://` `tuic://` 链接，
   自动解析协议、地址、端口、UUID/密码、TLS/SNI/WS 等参数，并生成客户端新链接（含二维码）
 - **TCP + UDP 转发**：hysteria2 / tuic / KCP / QUIC 等 UDP 协议自动开启 UDP 转发
+- **本机落地**：同一台服务器上的 GOST 进程可直接运行代理服务，不再需要第二台落地机或额外 systemd 服务
+- **GOST 原生协议**：覆盖官方公网代理处理器（HTTP/2、SOCKS4/4A/5、SS/SSU、SNI、Relay）及 TCP/UDP、TLS、WS、gRPC、KCP、QUIC、HTTP/3、SSH、ICMP 等网络通道
 - **流量统计**：实时连接数、今日/本月/累计流量、节点流量曲线（24 小时 / 7 天 / 30 天）
 - **流量配额**：每日 / 每月 / 总量，双向/单向计数，**达到额度自动暂停，周期结束自动恢复**
 - **限速与并发限制**：按节点设置上下行限速（Mbps）、最大并发连接数
@@ -154,6 +156,17 @@ curl -fsSL https://raw.githubusercontent.com/baiduxc/gost-webui/main/install.sh 
 
 > 客户端连接的是 `中转机地址:中转端口`，而 TLS/SNI、WS 路径、UUID 等仍是落地机的参数，
 > 因此中转机全程只做字节转发，不感知也不破解任何加密流量。
+
+### GOST 原生落地
+
+添加节点时切换到「GOST 体系」：
+
+1. 选择**本机落地**时，面板把代理 handler 与 listener 直接写入当前 GOST 配置并热加载；监听端口就是客户端连接端口。
+2. 选择**远程落地**时，面板生成远端 YAML、安装命令和 systemd 服务；当前机器根据传输通道使用 TCP 或 UDP 原样中转。
+3. 代理协议与传输通道分层保存。旧版 GOST 节点缺少这两个字段时自动按 `ss + tcp` 兼容。
+4. 标准 `ss://` 可继续用于 Clash；其它 GOST 组合会进入通用订阅，客户端地址格式为 `处理协议+传输通道://认证@主机:端口`。
+
+SNI 透明代理本身不提供账号认证；公网使用时应限制安全组或防火墙来源。ICMP/ICMPv6/Fake TCP 使用原始报文，只允许本机落地并需要 root 或 `CAP_NET_RAW`。GOST 3.3 的 DTLS 拨号端要求客户端证书，使用时还需在客户端节点参数中配置 `certFile` / `keyFile`。
 
 ### 链接改写规则（自动完成，无需手工）
 

@@ -37,8 +37,8 @@ type Controller struct {
 	SampleSeconds int
 	RetentionDays int
 
-	mu    sync.RWMutex
-	live  map[string]*model.Live
+	mu   sync.RWMutex
+	live map[string]*model.Live
 	// nodes 缓存，避免采样时频繁读库
 	nodes  []*model.Node
 	gostOK bool
@@ -202,8 +202,16 @@ func (c *Controller) ApplyNode(ctx context.Context, n *model.Node) error {
 			}
 		}
 	}
-	if !n.UDP {
-		if err := cl.DeleteService(ctx, model.UDPName(n.ID)); err != nil {
+	expected := make(map[string]bool, len(cfg.Services))
+	for _, service := range cfg.Services {
+		expected[service.Name] = true
+	}
+	// 协议/通道切换后清除不再生成的辅助服务，避免旧 UDP 服务残留。
+	for _, name := range []string{model.TCPName(n.ID), model.UDPName(n.ID)} {
+		if expected[name] {
+			continue
+		}
+		if err := cl.DeleteService(ctx, name); err != nil {
 			return err
 		}
 	}

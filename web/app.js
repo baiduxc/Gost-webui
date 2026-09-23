@@ -421,7 +421,7 @@ function renderNodes() {
   wrap.innerHTML = `<table>
     <thead><tr><th>节点名称 / 落地机</th><th>监听端口</th><th>本月用量 / 配额</th><th>状态</th><th class="right">操作</th></tr></thead>
     <tbody>${nodes.map(n => `<tr class="${n.id === state.selectedNodeId ? 'selected' : ''}">
-      <td><button class="node-select" data-act="select" data-id="${esc(n.id)}" aria-pressed="${n.id === state.selectedNodeId}">${icon('server')}<span><b>${esc(n.name)}</b><small>${esc(n.protocol || 'TCP')}${n.mode === 'gost' ? ' · GOST' : ''}${n.udp ? ' · TCP+UDP' : ''} / ${esc(n.targetHost)}:${n.targetPort}</small></span></button></td>
+      <td><button class="node-select" data-act="select" data-id="${esc(n.id)}" aria-pressed="${n.id === state.selectedNodeId}">${icon('server')}<span><b>${esc(n.name)}</b><small>${esc(n.protocol || 'TCP')}${n.mode === 'gost' ? ' · GOST' : ''}${n.udp ? ' · TCP+UDP' : ''} / ${n.mode === 'gost' && n.gostLocal ? '本机落地' : `${esc(n.targetHost)}:${n.targetPort}`}</small></span></button></td>
       <td class="mono">${n.listenPort}</td>
       <td class="node-quota"><span class="mono">${fmtBytes((n.monthIn || 0) + (n.monthOut || 0))}</span>${quotaCell(n)}</td>
       <td><button class="node-toggle" data-act="toggle" data-id="${esc(n.id)}" role="switch" aria-checked="${!!n.enabled}" aria-label="${n.enabled ? '停用' : '启用'}${esc(n.name)}"><span class="toggle-track"></span></button>${statusTag(n.enabled, n.live && n.live.quotaBlocked)}</td>
@@ -567,14 +567,63 @@ function closeModal() {
 }
 
 /* ---------------- 添加/编辑节点 ---------------- */
+const GOST_PROTOCOLS = [
+  { value: 'http', label: 'HTTP', transport: 'tcp', auth: 'userpass' },
+  { value: 'http2', label: 'HTTP/2', transport: 'http2', auth: 'userpass' },
+  { value: 'socks4', label: 'SOCKS4', transport: 'tcp', auth: 'user' },
+  { value: 'socks4a', label: 'SOCKS4A', transport: 'tcp', auth: 'user' },
+  { value: 'socks5', label: 'SOCKS5', transport: 'tcp', auth: 'userpass' },
+  { value: 'ss', label: 'Shadowsocks TCP', transport: 'tcp', auth: 'ss' },
+  { value: 'ssu', label: 'Shadowsocks UDP', transport: 'udp', auth: 'ss' },
+  { value: 'sni', label: 'SNI 透明代理', transport: 'tcp', auth: 'none' },
+  { value: 'relay', label: 'GOST Relay', transport: 'tcp', auth: 'userpass' },
+];
+const GOST_TRANSPORTS = [
+  { value: 'tcp', label: 'TCP', network: 'tcp' },
+  { value: 'mtcp', label: 'Multiplex TCP', network: 'tcp' },
+  { value: 'udp', label: 'UDP', network: 'udp' },
+  { value: 'tls', label: 'TLS', network: 'tcp' },
+  { value: 'dtls', label: 'DTLS（客户端需证书）', network: 'udp' },
+  { value: 'mtls', label: 'Multiplex TLS', network: 'tcp' },
+  { value: 'ws', label: 'WebSocket', network: 'tcp', path: true },
+  { value: 'wss', label: 'WebSocket TLS', network: 'tcp', path: true },
+  { value: 'mws', label: 'Multiplex WebSocket', network: 'tcp', path: true },
+  { value: 'mwss', label: 'Multiplex WebSocket TLS', network: 'tcp', path: true },
+  { value: 'h2', label: 'HTTP/2 TLS', network: 'tcp', path: true },
+  { value: 'h2c', label: 'HTTP/2 Cleartext', network: 'tcp', path: true },
+  { value: 'http2', label: 'HTTP/2 Proxy Channel', network: 'tcp' },
+  { value: 'grpc', label: 'gRPC', network: 'tcp', path: true },
+  { value: 'pht', label: 'HTTP Tunnel', network: 'tcp' },
+  { value: 'phts', label: 'HTTPS Tunnel', network: 'tcp' },
+  { value: 'ssh', label: 'SSH', network: 'tcp' },
+  { value: 'sshd', label: 'SSHD', network: 'tcp' },
+  { value: 'kcp', label: 'KCP', network: 'udp' },
+  { value: 'quic', label: 'QUIC', network: 'udp' },
+  { value: 'h3', label: 'HTTP/3', network: 'udp' },
+  { value: 'http3', label: 'HTTP/3 Proxy Channel', network: 'udp' },
+  { value: 'wt', label: 'WebTransport', network: 'udp' },
+  { value: 'ohttp', label: 'HTTP Obfuscation', network: 'tcp' },
+  { value: 'otls', label: 'TLS Obfuscation', network: 'tcp' },
+  { value: 'icmp', label: 'ICMPv4（本机 / 特权）', network: 'raw', localOnly: true },
+  { value: 'icmp6', label: 'ICMPv6（本机 / 特权）', network: 'raw', localOnly: true },
+  { value: 'ftcp', label: 'Fake TCP（本机 / 特权）', network: 'raw', localOnly: true },
+];
+const gostProtocol = value => GOST_PROTOCOLS.find(x => x.value === value) || GOST_PROTOCOLS[5];
+const gostTransport = value => GOST_TRANSPORTS.find(x => x.value === value) || GOST_TRANSPORTS[0];
+
 function openNodeForm(node) {
   const isEdit = !!node;
   const q = (node && node.quota) || { enabled: false, period: 'monthly', bytes: 0, direction: 'total' };
   const rate = (node && node.rate) || { enabled: false, inBps: 0, outBps: 0 };
   const isGost = !!(node && node.mode === 'gost');
   const initMode = isGost ? 'gost' : 'link';
+  const gp = (isGost && node.gostProtocol) || 'ss';
+  const gt = (isGost && node.gostTransport) || gostProtocol(gp).transport;
+  const gl = isGost ? !!node.gostLocal : true;
   const gc = (isGost && node.gostCipher) || 'aes-256-gcm';
   const cipherOpt = (v) => `<option value="${v}"${gc === v ? ' selected' : ''}>${v}</option>`;
+  const protocolOpts = GOST_PROTOCOLS.map(x => `<option value="${x.value}"${gp === x.value ? ' selected' : ''}>${x.label}</option>`).join('');
+  const transportOpts = GOST_TRANSPORTS.map(x => `<option value="${x.value}"${gt === x.value ? ' selected' : ''}>${x.label}</option>`).join('');
 
   openModal(`
     <button class="modal-close" onclick="closeModal()">×</button>
@@ -600,21 +649,44 @@ function openNodeForm(node) {
     </div>
 
     <div id="modeGost" class="${initMode === 'gost' ? '' : 'hidden'}">
-      <div class="notice">落地机只需安装 GOST 并运行下方生成的 Shadowsocks 服务，无需 Xray/sing-box；中转机对其做纯 TCP 透传，客户端 ss 握手端到端直达落地机。保存后会给出落地机一键部署命令。</div>
+      <div class="notice" id="gostModeNotice">GOST 原生落地支持本机直接运行，也支持远程落地后由当前服务器中转。代理协议与传输通道可独立组合。</div>
       <div class="row">
         <div class="field">
-          <label>落地机公网 IP / 域名</label>
-          <input id="f-ghost-host" type="text" value="${esc(isGost ? node.targetHost : '')}" placeholder="如 1.2.3.4 或 land.example.com">
+          <label>落地位置</label>
+          <select id="f-gost-location">
+            <option value="local" ${gl ? 'selected' : ''}>本机 · 由当前面板直接运行</option>
+            <option value="remote" ${!gl ? 'selected' : ''}>远程落地机 · 当前服务器中转</option>
+          </select>
         </div>
         <div class="field">
-          <label>落地机端口</label>
-          <input id="f-ghost-port" type="number" min="1" max="65535" value="${isGost ? node.targetPort : ''}" placeholder="如 8388">
+          <label>代理协议</label>
+          <select id="f-gost-protocol">${protocolOpts}</select>
         </div>
       </div>
       <div class="row">
         <div class="field">
-          <label>加密方式</label>
-          <select id="f-ghost-cipher">
+          <label>传输通道</label>
+          <select id="f-gost-transport">${transportOpts}</select>
+        </div>
+        <div class="field" id="gostPathField">
+          <label>通道路径</label>
+          <input id="f-gost-path" type="text" value="${esc(isGost ? node.gostPath || '' : '')}" placeholder="如 /gost（留空使用 GOST 默认值）">
+        </div>
+      </div>
+      <div class="row" id="gostRemoteFields">
+        <div class="field">
+          <label>远程落地机公网 IP / 域名</label>
+          <input id="f-gost-host" type="text" value="${esc(isGost && !gl ? node.targetHost : '')}" placeholder="如 1.2.3.4 或 land.example.com">
+        </div>
+        <div class="field">
+          <label>远程落地机端口</label>
+          <input id="f-gost-port" type="number" min="1" max="65535" value="${isGost && !gl ? node.targetPort : ''}" placeholder="如 8388">
+        </div>
+      </div>
+      <div class="row" id="gostSSAuth">
+        <div class="field">
+          <label>Shadowsocks 加密方式</label>
+          <select id="f-gost-cipher">
             ${cipherOpt('aes-256-gcm')}
             ${cipherOpt('aes-128-gcm')}
             ${cipherOpt('chacha20-ietf-poly1305')}
@@ -623,11 +695,25 @@ function openNodeForm(node) {
         <div class="field">
           <label>密码</label>
           <div class="row tight">
-            <input id="f-ghost-pass" type="text" value="${esc(isGost ? node.gostPassword : '')}" placeholder="留空自动生成">
-            <button class="btn secondary sm" id="ghostRandBtn" style="flex:0 0 auto">随机</button>
+            <input id="f-gost-ss-pass" type="text" value="${esc(isGost ? node.gostPassword : '')}" placeholder="留空自动生成">
+            <button class="btn secondary sm" id="gostSSRandBtn" type="button" style="flex:0 0 auto">随机</button>
           </div>
         </div>
       </div>
+      <div class="row" id="gostUserAuth">
+        <div class="field">
+          <label>用户名</label>
+          <input id="f-gost-user" type="text" value="${esc(isGost ? node.gostUsername || '' : '')}" placeholder="留空使用 gost">
+        </div>
+        <div class="field" id="gostPasswordField">
+          <label>密码</label>
+          <div class="row tight">
+            <input id="f-gost-pass" type="text" value="${esc(isGost ? node.gostPassword : '')}" placeholder="留空自动生成">
+            <button class="btn secondary sm" id="gostRandBtn" type="button" style="flex:0 0 auto">随机</button>
+          </div>
+        </div>
+      </div>
+      <div class="notice" id="gostComboHint"></div>
     </div>
 
     <div class="row">
@@ -644,9 +730,9 @@ function openNodeForm(node) {
       </div>
     </div>
 
-    <div class="field">
+    <div class="field" id="udpField">
       <label class="switch"><input type="checkbox" id="f-udp" ${node && node.udp ? 'checked' : ''}><span class="track"></span>
-        <span><span class="txt">同时转发 UDP</span><span class="desc">hysteria2 / tuic / KCP / QUIC 等协议必须开启</span></span></label>
+        <span><span class="txt" id="udpTitle">同时转发 UDP</span><span class="desc" id="udpDesc">hysteria2 / tuic / KCP / QUIC 等协议必须开启</span></span></label>
     </div>
 
     <details id="advOverride" class="${initMode === 'link' ? '' : 'hidden'}">
@@ -714,6 +800,49 @@ function openNodeForm(node) {
   `, true);
 
   $('#f-link').addEventListener('input', debounce(() => parseLink(true), 500));
+  const updateGostFields = (resetTransport = false) => {
+    const proto = gostProtocol($('#f-gost-protocol').value);
+    if (resetTransport) $('#f-gost-transport').value = proto.transport;
+    const transport = gostTransport($('#f-gost-transport').value);
+    const local = $('#f-gost-location').value === 'local';
+    const isSS = proto.auth === 'ss';
+    const channelAuth = transport.value === 'ssh' || transport.value === 'sshd';
+    const needsUser = !isSS && (proto.auth !== 'none' || channelAuth);
+
+    $('#gostRemoteFields').classList.toggle('hidden', local);
+    $('#gostSSAuth').classList.toggle('hidden', !isSS);
+    $('#gostUserAuth').classList.toggle('hidden', !needsUser);
+    $('#gostPasswordField').classList.toggle('hidden', proto.auth === 'user' && !channelAuth);
+    $('#gostPathField').classList.toggle('hidden', !transport.path);
+
+    const udpAddon = proto.value === 'ss' && transport.network === 'tcp';
+    $('#udpField').classList.toggle('hidden', !udpAddon);
+    if (!udpAddon) $('#f-udp').checked = false;
+    $('#udpTitle').textContent = '同时提供 Shadowsocks UDP';
+    $('#udpDesc').textContent = '在同一端口额外启动 SSU 服务；TCP 与 UDP 可同时使用';
+
+    const warnings = [];
+    if (transport.localOnly && !local) warnings.push(`${transport.label} 使用原始网络报文，只支持本机落地`);
+    if (transport.localOnly) warnings.push('运行需要 root 或 CAP_NET_RAW 权限');
+    if (transport.value === 'dtls') warnings.push('GOST DTLS 客户端还需自行配置 certFile / keyFile');
+    if (transport.value === 'udp' && !['ssu', 'relay'].includes(proto.value)) warnings.push('UDP 通道只支持 Shadowsocks UDP 或 GOST Relay');
+    if (proto.value === 'http2' && transport.value !== 'http2') warnings.push('HTTP/2 代理协议必须使用 HTTP/2 Proxy Channel');
+    if (isSS && channelAuth) warnings.push('Shadowsocks 与 SSH/SSHD 不能共用一组认证信息');
+    const where = local ? '服务将直接加入当前面板管理的 GOST 进程' : `当前服务器将按 ${transport.network.toUpperCase()} 原样中转到远程落地`;
+    const authText = proto.auth === 'none' && !channelAuth ? '该协议本身不提供账号认证，请配合防火墙限制来源' : '凭据留空时由后端自动生成';
+    $('#gostComboHint').className = `notice${warnings.length ? ' warn' : ''}`;
+    $('#gostComboHint').innerHTML = `${esc(where)}。${esc(authText)}。${warnings.length ? '<br><b>' + esc(warnings.join('；')) + '</b>' : ''}`;
+  };
+  const updateModeUI = () => {
+    const mode = $('#nodeModeTabs button.active')?.dataset.mode || 'link';
+    if (mode === 'gost') {
+      updateGostFields(false);
+    } else {
+      $('#udpField').classList.remove('hidden');
+      $('#udpTitle').textContent = '同时转发 UDP';
+      $('#udpDesc').textContent = 'hysteria2 / tuic / KCP / QUIC 等协议必须开启';
+    }
+  };
   $$('#nodeModeTabs button').forEach(b => {
     b.onclick = () => {
       const mode = b.dataset.mode;
@@ -722,9 +851,14 @@ function openNodeForm(node) {
       $('#modeLink').classList.toggle('hidden', !isLink);
       $('#advOverride').classList.toggle('hidden', !isLink);
       $('#modeGost').classList.toggle('hidden', isLink);
+      updateModeUI();
     };
   });
-  $('#ghostRandBtn').onclick = () => { $('#f-ghost-pass').value = randPass(20); };
+  $('#f-gost-location').onchange = () => updateGostFields(false);
+  $('#f-gost-protocol').onchange = () => updateGostFields(true);
+  $('#f-gost-transport').onchange = () => updateGostFields(false);
+  $('#gostSSRandBtn').onclick = () => { $('#f-gost-ss-pass').value = randPass(20); };
+  $('#gostRandBtn').onclick = () => { $('#f-gost-pass').value = randPass(20); };
   $('#randPortBtn').onclick = async () => {
     try { const r = await api('api/ports/free'); $('#f-port').value = r.port; }
     catch (e) { toast(e.message, 'err'); }
@@ -743,6 +877,7 @@ function openNodeForm(node) {
       el.className = r.ok ? 'hint' : 'hint error-text';
     } catch (e) { el.textContent = e.message; el.className = 'hint error-text'; }
   };
+  updateModeUI();
   if (node && initMode === 'link') parseLink(false);
   $('#saveNodeBtn').onclick = () => saveNode(node);
 }
@@ -816,16 +951,28 @@ async function saveNode(node) {
 
   let body;
   if (mode === 'gost') {
-    const th = $('#f-ghost-host').value.trim();
-    const tp = parseInt($('#f-ghost-port').value || '0', 10) || 0;
-    if (!th) { toast('请填写落地机公网 IP / 域名', 'err'); return; }
-    if (!(tp > 0 && tp <= 65535)) { toast('请填写有效的落地机端口', 'err'); return; }
+    const local = $('#f-gost-location').value === 'local';
+    const proto = $('#f-gost-protocol').value;
+    const transport = gostTransport($('#f-gost-transport').value);
+    const th = $('#f-gost-host').value.trim();
+    const tp = parseInt($('#f-gost-port').value || '0', 10) || 0;
+    if (!local && !th) { toast('请填写远程落地机公网 IP / 域名', 'err'); return; }
+    if (!local && !(tp > 0 && tp <= 65535)) { toast('请填写有效的远程落地机端口', 'err'); return; }
+    if (!local && transport.localOnly) { toast(`${transport.label} 只能作为本机落地`, 'err'); return; }
+    if (transport.value === 'udp' && !['ssu', 'relay'].includes(proto)) { toast('UDP 通道只支持 Shadowsocks UDP 或 GOST Relay', 'err'); return; }
+    if (proto === 'http2' && transport.value !== 'http2') { toast('HTTP/2 代理协议必须使用 HTTP/2 Proxy Channel', 'err'); return; }
+    if (['ss', 'ssu'].includes(proto) && ['ssh', 'sshd'].includes(transport.value)) { toast('Shadowsocks 不能与 SSH/SSHD 通道组合', 'err'); return; }
     body = Object.assign({
       mode: 'gost',
-      targetHost: th,
-      targetPort: tp,
-      gostCipher: $('#f-ghost-cipher').value,
-      gostPassword: $('#f-ghost-pass').value.trim(),
+      gostLocal: local,
+      targetHost: local ? '' : th,
+      targetPort: local ? 0 : tp,
+      gostProtocol: proto,
+      gostTransport: transport.value,
+      gostUsername: $('#f-gost-user').value.trim(),
+      gostCipher: $('#f-gost-cipher').value,
+      gostPassword: ['ss', 'ssu'].includes(proto) ? $('#f-gost-ss-pass').value.trim() : $('#f-gost-pass').value.trim(),
+      gostPath: $('#f-gost-path').value.trim(),
     }, common);
   } else {
     const link = $('#f-link').value.trim();
@@ -853,11 +1000,12 @@ async function saveNode(node) {
 async function openLinkModal(node) {
   let r = null;
   try { r = await api(`api/nodes/${node.id}/link`); } catch (e) { toast(e.message, 'err'); return; }
+  const gostNative = node.mode === 'gost' && !(['ss'].includes(node.gostProtocol || 'ss') && (node.gostTransport || 'tcp') === 'tcp');
   openModal(`
     <button class="modal-close" onclick="closeModal()">×</button>
     <h2>客户端链接 · ${esc(node.name)}</h2>
     ${state.publicHostPrivate ? `<div class="notice warn">当前服务器地址 ${esc(r.host)} 是内网地址，客户端无法连接，请到「系统设置」填写公网 IP 或域名。</div>` : ''}
-    <div class="notice">把下面链接导入 v2rayN 等客户端即可，地址已指向本服务器 <b>${esc(r.host)}:${r.port}</b>。</div>
+    <div class="notice">${gostNative ? '把下面地址用作 GOST 客户端的上游节点（<span class="mono">gost -F 地址</span>）' : '把下面链接导入兼容客户端'}，连接地址为本服务器 <b>${esc(r.host)}:${r.port}</b>。</div>
     <div class="code-box" id="linkText">${esc(r.url)}</div>
     <div style="display:flex;gap:24px;margin-top:24px;align-items:flex-start;flex-wrap:wrap">
       <button class="btn" id="copyLinkBtn">${icon('copy')} 复制链接</button>
@@ -880,9 +1028,20 @@ async function renderDeploy(node, sel) {
   let d;
   try { d = await api(`api/nodes/${node.id}/deploy`); }
   catch (e) { box.innerHTML = `<div class="notice err">${esc(e.message)}</div>`; return; }
+  if (d.managed) {
+    box.innerHTML = `
+      <div class="section-label">本机落地（GOST 体系）</div>
+      <div class="notice">该服务已由当前面板直接管理，无需另装或另起 GOST。协议 <b>${esc(d.protocol.toUpperCase())}</b> · 通道 <b>${esc(d.transport.toUpperCase())}</b> · 端口 <b>${d.port}</b>。</div>
+      <div class="notice" style="margin-top:12px">${(d.steps || []).map(s => esc(s)).join('<br>')}</div>
+      <details style="margin-top:16px">
+        <summary class="hint" style="cursor:pointer">查看面板生成的服务配置</summary>
+        <div class="code-box" style="margin-top:10px">${esc(d.config)}</div>
+      </details>`;
+    return;
+  }
   box.innerHTML = `
-    <div class="section-label">落地机部署（GOST 体系）</div>
-    <div class="notice">在落地机安装并运行 GOST 的 Shadowsocks 服务即可，无需 Xray。加密 <b>${esc(d.cipher)}</b> · 端口 <b>${d.port}</b>${d.udp ? ' · TCP+UDP' : ' · TCP'}。</div>
+    <div class="section-label">远程落地机部署（GOST 体系）</div>
+    <div class="notice">在远程落地机运行 GOST 服务。协议 <b>${esc(d.protocol.toUpperCase())}</b> · 通道 <b>${esc(d.transport.toUpperCase())}</b> · 端口 <b>${d.port}</b>${d.udp ? ' · 附加 SSU' : ''}。</div>
     <div class="hint" style="margin-top:12px">操作步骤</div>
     <div class="notice">${(d.steps || []).map(s => esc(s)).join('<br>')}</div>
 
@@ -894,7 +1053,7 @@ async function renderDeploy(node, sel) {
     <div class="code-box">${esc(d.installScriptCmd)}</div>
     <button class="btn secondary sm" id="copyInstallScriptBtn" style="margin-top:8px">${icon('copy')} 复制</button>
 
-    <div class="hint" style="margin-top:16px">② 保存 ss 服务配置到 ${esc(d.confPath)}</div>
+    <div class="hint" style="margin-top:16px">② 保存代理服务配置到 ${esc(d.confPath)}</div>
     <div class="code-box">${esc(d.saveCommand)}</div>
     <button class="btn secondary sm" id="copySaveBtn" style="margin-top:8px">${icon('copy')} 复制</button>
 
@@ -955,8 +1114,8 @@ async function openDetail(node) {
     body.innerHTML = `
       <div class="kv" style="margin-bottom:24px">
         <div class="k">状态</div><div class="v">${statusTag(node.enabled, live.quotaBlocked)}</div>
-        <div class="k">落地机</div><div class="v mono">${esc(node.targetHost)}:${node.targetPort} · ${esc(node.protocol)}</div>
-        <div class="k">监听端口</div><div class="v mono">${node.listenPort} ${node.udp ? '(TCP+UDP)' : '(TCP)'}</div>
+        <div class="k">落地机</div><div class="v mono">${node.mode === 'gost' && node.gostLocal ? '本机直出' : `${esc(node.targetHost)}:${node.targetPort}`} · ${esc(node.protocol)}</div>
+        <div class="k">监听端口</div><div class="v mono">${node.listenPort}${node.udp ? ' · 附加 UDP' : ''}</div>
         <div class="k">连接数</div><div class="v">当前 ${live.currentConns || 0} · 累计 ${live.totalConns || 0}</div>
         <div class="k">今日流量</div><div class="v mono">↑ ${fmtBytes(node.todayIn)} / ↓ ${fmtBytes(node.todayOut)}</div>
         <div class="k">本月流量</div><div class="v mono">↑ ${fmtBytes(node.monthIn)} / ↓ ${fmtBytes(node.monthOut)}</div>
@@ -976,7 +1135,7 @@ async function openDetail(node) {
       <div class="code-box" id="detailLink">加载中…</div>
       <div style="display:flex;gap:24px;margin-top:16px;align-items:flex-start;flex-wrap:wrap">
         <div class="qr"><img id="detailQR" src="${BASE}api/nodes/${node.id}/qrcode?t=${Date.now()}" alt="二维码"></div>
-        <div class="hint">扫码或在客户端粘贴链接导入<br>连接地址 <span class="mono">${esc(state.publicHost)}:${node.listenPort}</span></div>
+        <div class="hint">扫码或复制客户端地址<br>连接地址 <span class="mono">${esc(state.publicHost)}:${node.listenPort}</span></div>
       </div>
       ${node.mode === 'gost' ? '<div id="detailDeploy"></div>' : ''}`;
     drawChart($('#detailChart'), r.points || []);
@@ -1010,6 +1169,19 @@ async function openNodeSub(node) {
   const schemeNote = r.scheme === 'https'
     ? '已通过 <b>HTTPS</b> 提供（证书就绪）。'
     : '当前为 <b>HTTP</b>。如需 HTTPS，请到「系统设置 → 订阅与证书」配置域名并申请证书。';
+  const clashItem = r.clashSupported ? `
+      <div class="sub-item">
+        <div class="hint">Clash Meta / mihomo（强制 YAML）</div>
+        <div class="code-box">${esc(r.clashURL)}</div>
+        <div class="sub-qr">
+          <div class="qr"><img src="${qr(r.clashURL)}" alt="Clash 订阅二维码"></div>
+          <button class="btn secondary sm" data-copy="${esc(r.clashURL)}">复制链接</button>
+        </div>
+      </div>` : `
+      <div class="sub-item">
+        <div class="hint">GOST 原生协议</div>
+        <div class="notice">当前协议或通道需要 GOST 客户端。通用订阅中已包含可传给 <span class="mono">gost -F</span> 的节点地址。</div>
+      </div>`;
   body.innerHTML = `
     <div class="notice">${r.enabled ? '' : '<b>该节点已停用，订阅内容为空。</b> '}${schemeNote}</div>
     <div class="sub-grid">
@@ -1021,14 +1193,7 @@ async function openNodeSub(node) {
           <button class="btn secondary sm" data-copy="${esc(r.url)}">复制链接</button>
         </div>
       </div>
-      <div class="sub-item">
-        <div class="hint">Clash Meta / mihomo（强制 YAML）</div>
-        <div class="code-box">${esc(r.clashURL)}</div>
-        <div class="sub-qr">
-          <div class="qr"><img src="${qr(r.clashURL)}" alt="Clash 订阅二维码"></div>
-          <button class="btn secondary sm" data-copy="${esc(r.clashURL)}">复制链接</button>
-        </div>
-      </div>
+      ${clashItem}
     </div>
     <div class="section-label">通用直链（v2rayN / Shadowrocket）</div>
     <div class="code-box">${esc(r.universalURL)}</div>

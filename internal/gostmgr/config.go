@@ -35,11 +35,15 @@ type Service struct {
 }
 
 type Handler struct {
-	Type string `yaml:"type" json:"type"`
+	Type     string         `yaml:"type" json:"type"`
+	Auth     *Auth          `yaml:"auth,omitempty" json:"auth,omitempty"`
+	Metadata map[string]any `yaml:"metadata,omitempty" json:"metadata,omitempty"`
 }
 
 type Listener struct {
-	Type string `yaml:"type" json:"type"`
+	Type     string         `yaml:"type" json:"type"`
+	Auth     *Auth          `yaml:"auth,omitempty" json:"auth,omitempty"`
+	Metadata map[string]any `yaml:"metadata,omitempty" json:"metadata,omitempty"`
 }
 
 type Forwarder struct {
@@ -141,8 +145,6 @@ func BuildConfig(nodes []*model.Node, opts BuildOptions) *Config {
 		if n == nil || !n.Enabled {
 			continue
 		}
-		target := fmt.Sprintf("%s:%d", n.TargetHost, n.TargetPort)
-
 		var quotas []string
 		if n.Quota.Enabled && n.Quota.Bytes > 0 {
 			qname := model.QuotaName(n.ID)
@@ -177,35 +179,101 @@ func BuildConfig(nodes []*model.Node, opts BuildOptions) *Config {
 			})
 		}
 
-		tcp := &Service{
-			Name:      model.TCPName(n.ID),
-			Addr:      fmt.Sprintf(":%d", n.ListenPort),
-			Handler:   &Handler{Type: "tcp"},
-			Listener:  &Listener{Type: "tcp"},
-			Forwarder: &Forwarder{Nodes: []*ForwardNode{{Name: "target", Addr: target}}},
-			Quotas:    quotas,
-			Limiter:   limiter,
-			CLimiter:  climiter,
-			Metadata:  map[string]any{"enableStats": true},
-		}
-		cfg.Services = append(cfg.Services, tcp)
-
-		if n.UDP {
-			udp := &Service{
-				Name:      model.UDPName(n.ID),
-				Addr:      fmt.Sprintf(":%d", n.ListenPort),
-				Handler:   &Handler{Type: "udp"},
-				Listener:  &Listener{Type: "udp"},
-				Forwarder: &Forwarder{Nodes: []*ForwardNode{{Name: "target", Addr: target}}},
-				Quotas:    quotas,
-				Limiter:   limiter,
-				CLimiter:  climiter,
-				Metadata:  map[string]any{"enableStats": true},
+		var services []*Service
+		if n.Mode == "gost" && n.GostLocal {
+			services = BuildGostProxyServices(n, n.ListenPort)
+		} else {
+			target := fmt.Sprintf("%s:%d", n.TargetHost, n.TargetPort)
+			network := "tcp"
+			if n.Mode == "gost" {
+				if t, ok := TransportSpec(NodeGostTransport(n)); ok && t.Network == "udp" {
+					network = "udp"
+				}
 			}
-			cfg.Services = append(cfg.Services, udp)
+			services = append(services, relayService(model.TCPName(n.ID), n.ListenPort, network, target))
+			if n.UDP && network == "tcp" {
+				services = append(services, relayService(model.UDPName(n.ID), n.ListenPort, "udp", target))
+			}
+		}
+
+		for _, service := range services {
+			service.Quotas = quotas
+			service.Limiter = limiter
+			service.CLimiter = climiter
+			if service.Metadata == nil {
+				service.Metadata = map[string]any{}
+			}
+			service.Metadata["enableStats"] = true
+			cfg.Services = append(cfg.Services, service)
 		}
 	}
 	return cfg
+}
+
+func relayService(name string, port int, network, target string) *Service {
+	return &Service{
+		Name:      name,
+		Addr:      fmt.Sprintf(":%d", port),
+		Handler:   &Handler{Type: network},
+		Listener:  &Listener{Type: network},
+		Forwarder: &Forwarder{Nodes: []*ForwardNode{{Name: "target", Addr: target}}},
+	}
+}
+
+func nodeAuth(n *model.Node, protocol string) *Auth {
+	p, _ := ProtocolSpec(protocol)
+	switch p.Auth {
+	case "ss":
+		return &Auth{Username: n.GostCipher, Password: n.GostPassword}
+	case "user":
+		return &Auth{Username: n.GostUsername}
+	case "userpass":
+		return &Auth{Username: n.GostUsername, Password: n.GostPassword}
+	default:
+		return nil
+	}
+}
+
+// BuildGostProxyServices 生成由 GOST 直接承载的本机落地服务。
+// 返回的服务尚未附加面板配额、限速和连接数限制，便于落地机部署配置复用。
+func BuildGostProxyServices(n *model.Node, port int) []*Service {
+	protocol, transport := NodeGostProtocol(n), NodeGostTransport(n)
+	auth := nodeAuth(n, protocol)
+	handler := &Handler{Type: protocol, Auth: auth}
+	listener := &Listener{Type: transport}
+	if transport == "dtls" {
+		// GOST 3.3.0 将未设置的 DTLS flight interval 作为零值传给 pion/dtls，
+		// 后者会拒绝启动；为服务端和客户端提供一个明确的兼容默认值。
+		listener.Metadata = map[string]any{"flightInterval": "500ms", "mtu": 1200}
+	}
+
+	// SSH 通道在 GOST 中由 listener 认证；URL 中的一组凭据也会被客户端交给 dialer。
+	if transport == "ssh" || transport == "sshd" {
+		handler.Auth = nil
+		listener.Auth = &Auth{Username: n.GostUsername, Password: n.GostPassword}
+	}
+	if t, ok := TransportSpec(transport); ok && t.Path && strings.TrimSpace(n.GostPath) != "" {
+		if listener.Metadata == nil {
+			listener.Metadata = map[string]any{}
+		}
+		listener.Metadata["path"] = strings.TrimSpace(n.GostPath)
+	}
+
+	services := []*Service{{
+		Name:     model.TCPName(n.ID),
+		Addr:     fmt.Sprintf(":%d", port),
+		Handler:  handler,
+		Listener: listener,
+	}}
+	if n.UDP && protocol == "ss" {
+		services = append(services, &Service{
+			Name:     model.UDPName(n.ID),
+			Addr:     fmt.Sprintf(":%d", port),
+			Handler:  &Handler{Type: "ssu", Auth: nodeAuth(n, protocol)},
+			Listener: &Listener{Type: "udp"},
+		})
+	}
+	return services
 }
 
 // Marshal 生成 YAML 文本。

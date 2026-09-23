@@ -10,6 +10,7 @@ import (
 	"github.com/skip2/go-qrcode"
 
 	"gost-webui/internal/cert"
+	"gost-webui/internal/gostmgr"
 )
 
 // handleQRText 生成任意文本（通常是订阅链接）的二维码 PNG，供已登录前端展示。
@@ -61,18 +62,20 @@ func (s *Server) handleNodeSubscription(w http.ResponseWriter, r *http.Request) 
 	}
 	base := s.subBaseURL()
 	token := node.SubToken
+	clashSupported := node.Mode != "gost" || (gostmgr.NodeGostProtocol(node) == "ss" && gostmgr.NodeGostTransport(node) == "tcp")
 	writeJSON(w, http.StatusOK, map[string]any{
-		"url":          base + "/" + token,
-		"clashURL":     base + "/" + token + "/clash",
-		"universalURL": base + "/" + token + "/universal",
-		"token":        token,
-		"scheme":       scheme,
-		"host":         host,
-		"port":         set.Port,
-		"suffix":       set.Suffix,
-		"certReady":    s.certReady(),
-		"enabled":      node.Enabled,
-		"nodeName":     node.Name,
+		"url":            base + "/" + token,
+		"clashURL":       base + "/" + token + "/clash",
+		"universalURL":   base + "/" + token + "/universal",
+		"token":          token,
+		"scheme":         scheme,
+		"host":           host,
+		"port":           set.Port,
+		"suffix":         set.Suffix,
+		"certReady":      s.certReady(),
+		"enabled":        node.Enabled,
+		"nodeName":       node.Name,
+		"clashSupported": clashSupported,
 	})
 }
 

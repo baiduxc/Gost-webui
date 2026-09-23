@@ -1,5 +1,13 @@
 # 更新记录
 
+## 1.6.0
+
+- 中转机可直接设为本机落地，代理服务由面板现有 GOST 进程统一管理。
+- GOST 体系从固定 Shadowsocks 扩展为 HTTP、HTTP/2、SOCKS4/4A/5、Shadowsocks TCP/UDP、SNI、Relay。
+- 代理协议与传输通道独立组合，加入 TLS、WebSocket、gRPC、KCP、QUIC、HTTP/3、WebTransport、SSH、ICMP 等通道。
+- 远程落地按通道自动选择 TCP/UDP 透传，并生成对应 YAML、systemd 与临时运行命令。
+- 保持旧版 GOST Shadowsocks 节点兼容，通用订阅可输出 GOST 原生客户端地址。
+
 ## 1.5.0
 
 - 全新仙侠主题：蓝天云海、悬浮仙山背景，墨绿与浅玉两套组件配色。

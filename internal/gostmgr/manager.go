@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 )
 
@@ -125,7 +124,7 @@ func (m *Manager) supervise(ctx context.Context) {
 		cmd := exec.Command(m.bin, "-C", m.confFile)
 		cmd.Stdout = out
 		cmd.Stderr = out
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		configureProcess(cmd)
 
 		err := cmd.Start()
 		if err == nil {
@@ -174,7 +173,7 @@ func (m *Manager) Stop() {
 	if cmd == nil || cmd.Process == nil {
 		return
 	}
-	_ = cmd.Process.Signal(syscall.SIGTERM)
+	_ = terminateProcess(cmd.Process)
 	done := make(chan struct{})
 	go func() {
 		_, _ = cmd.Process.Wait()

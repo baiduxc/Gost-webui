@@ -2,18 +2,17 @@ package server
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/skip2/go-qrcode"
 
+	"gost-webui/internal/gostmgr"
 	"gost-webui/internal/link"
 	"gost-webui/internal/model"
 )
@@ -29,11 +28,16 @@ type nodeInput struct {
 	SNI        string `json:"sni"`
 	Host       string `json:"host"`
 	Enabled    *bool  `json:"enabled"`
-	// Mode 为 link（默认，粘贴落地机链接）/ gost（落地机用 GOST 自建 ss 服务）。
-	Mode         string `json:"mode"`
-	GostCipher   string `json:"gostCipher"`
-	GostPassword string `json:"gostPassword"`
-	Quota        *struct {
+	// Mode 为 link（默认，粘贴落地机链接）/ gost（GOST 原生代理服务）。
+	Mode          string `json:"mode"`
+	GostLocal     bool   `json:"gostLocal"`
+	GostProtocol  string `json:"gostProtocol"`
+	GostTransport string `json:"gostTransport"`
+	GostUsername  string `json:"gostUsername"`
+	GostCipher    string `json:"gostCipher"`
+	GostPassword  string `json:"gostPassword"`
+	GostPath      string `json:"gostPath"`
+	Quota         *struct {
 		Enabled   bool   `json:"enabled"`
 		Period    string `json:"period"`
 		Bytes     int64  `json:"bytes"`
@@ -138,14 +142,17 @@ func parseIPFromBody(body string) string {
 
 func (s *Server) buildView(n *model.Node) *nodeView {
 	v := &nodeView{Node: n, Live: s.ctl.Live(n.ID)}
-	if info, err := link.Parse(n.LandingLink); err == nil {
+	if n.Mode != "gost" {
+		if info, err := link.Parse(n.LandingLink); err == nil {
+			v.Landing = info
+		}
+	} else if info, err := link.Parse(n.LandingLink); err == nil {
+		// 兼容旧版 Shadowsocks 节点的落地信息展示。
 		v.Landing = info
 	}
 	if host := s.publicHost(); host != "" {
-		if info, err := link.Parse(n.LandingLink); err == nil {
-			if out, err := info.Rewrite(host, n.ListenPort, n.Name, n.SNI, n.Host); err == nil {
-				v.URL = out
-			}
+		if out, _, err := s.nodeClientURL(n, host); err == nil {
+			v.URL = out
 		}
 	}
 	now := time.Now()
@@ -164,6 +171,20 @@ func (s *Server) buildView(n *model.Node) *nodeView {
 		}
 	}
 	return v
+}
+
+// nodeClientURL 生成客户端实际连接本机监听端口的地址。
+func (s *Server) nodeClientURL(n *model.Node, host string) (string, *link.Info, error) {
+	if n.Mode == "gost" {
+		out, err := gostmgr.GostClientURL(n, host, n.ListenPort)
+		return out, nil, err
+	}
+	info, err := link.Parse(n.LandingLink)
+	if err != nil {
+		return "", nil, fmt.Errorf("落地链接解析失败: %w", err)
+	}
+	out, err := info.Rewrite(host, n.ListenPort, n.Name, n.SNI, n.Host)
+	return out, info, err
 }
 
 func (s *Server) handleListNodes(w http.ResponseWriter, r *http.Request) {
@@ -391,19 +412,14 @@ func (s *Server) handleNodeLink(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "节点不存在")
 		return
 	}
-	info, err := link.Parse(node.LandingLink)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "落地链接解析失败: "+err.Error())
-		return
-	}
 	host := s.publicHost()
 	if host == "" {
 		writeErr(w, http.StatusBadRequest, "无法自动探测公网地址，请到「设置」手动填写中转机地址")
 		return
 	}
-	out, err := info.Rewrite(host, node.ListenPort, node.Name, node.SNI, node.Host)
+	out, info, err := s.nodeClientURL(node, host)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -446,17 +462,12 @@ func (s *Server) handleQRCode(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "节点不存在")
 		return
 	}
-	info, err := link.Parse(node.LandingLink)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
-		return
-	}
 	host := s.publicHost()
 	if host == "" {
 		writeErr(w, http.StatusBadRequest, "未配置中转机地址")
 		return
 	}
-	u, err := info.Rewrite(host, node.ListenPort, node.Name, node.SNI, node.Host)
+	u, _, err := s.nodeClientURL(node, host)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -588,59 +599,108 @@ var gostCiphers = map[string]bool{
 	"chacha20-ietf-poly1305": true,
 }
 
-// buildGostNode 处理“GOST 体系”模式：落地机只跑 GOST 的 ss 服务，
-// 面板生成凭据并合成一条指向落地机的 ss 链接存入 LandingLink，
-// 中转机对其纯 TCP 透传。
+// buildGostNode 处理“GOST 体系”模式：既可把当前面板主机直接设为落地机，
+// 也可生成远程落地配置并由当前主机做原始 TCP/UDP 透传。
 func (s *Server) buildGostNode(in *nodeInput, old *model.Node) (*model.Node, error) {
-	host := strings.TrimSpace(in.TargetHost)
-	if host == "" {
-		return nil, fmt.Errorf("请填写落地机的公网 IP 或域名")
-	}
-	if net.ParseIP(host) == nil && !validHostname(host) {
-		return nil, fmt.Errorf("落地地址无效: %s", host)
-	}
-	port := in.TargetPort
-	if port <= 0 || port > 65535 {
-		return nil, fmt.Errorf("落地端口无效")
-	}
-
-	cipher := strings.TrimSpace(in.GostCipher)
-	if cipher == "" {
-		cipher = "aes-256-gcm"
-	}
-	if !gostCiphers[cipher] {
-		return nil, fmt.Errorf("不支持的加密方式: %s", cipher)
-	}
-	password := strings.TrimSpace(in.GostPassword)
-	if password == "" {
-		if old != nil && old.Mode == "gost" && old.GostPassword != "" {
-			password = old.GostPassword
-		} else {
-			password = randomPassword(20)
-		}
-	}
-
 	n := newNodeBase(old)
 	n.Mode = "gost"
-	n.GostCipher = cipher
-	n.GostPassword = password
-	n.Protocol = "shadowsocks"
-	n.TargetHost = host
-	n.TargetPort = port
+	n.GostLocal = in.GostLocal
+	n.GostProtocol = strings.ToLower(strings.TrimSpace(in.GostProtocol))
+	if n.GostProtocol == "" {
+		n.GostProtocol = "ss"
+	}
+	ps, ok := gostmgr.ProtocolSpec(n.GostProtocol)
+	if !ok {
+		return nil, fmt.Errorf("不支持的 GOST 代理协议: %s", n.GostProtocol)
+	}
+	n.GostTransport = strings.ToLower(strings.TrimSpace(in.GostTransport))
+	if n.GostTransport == "" {
+		n.GostTransport = ps.DefaultTransport
+	}
+	if _, ok := gostmgr.TransportSpec(n.GostTransport); !ok {
+		return nil, fmt.Errorf("不支持的 GOST 传输通道: %s", n.GostTransport)
+	}
+
+	n.GostUsername = strings.TrimSpace(in.GostUsername)
+	n.GostCipher = strings.TrimSpace(in.GostCipher)
+	n.GostPassword = strings.TrimSpace(in.GostPassword)
+	n.GostPath = strings.TrimSpace(in.GostPath)
+	if n.GostPath != "" && !strings.HasPrefix(n.GostPath, "/") {
+		n.GostPath = "/" + n.GostPath
+	}
+
+	if ps.Auth == "ss" {
+		if n.GostCipher == "" {
+			n.GostCipher = "aes-256-gcm"
+		}
+		if !gostCiphers[n.GostCipher] {
+			return nil, fmt.Errorf("不支持的加密方式: %s", n.GostCipher)
+		}
+	} else {
+		n.GostCipher = ""
+	}
+	needsChannelAuth := n.GostTransport == "ssh" || n.GostTransport == "sshd"
+	if (ps.Auth == "userpass" || ps.Auth == "user" || needsChannelAuth) && n.GostUsername == "" {
+		if old != nil && old.Mode == "gost" && old.GostUsername != "" {
+			n.GostUsername = old.GostUsername
+		} else {
+			n.GostUsername = "gost"
+		}
+	}
+	needsPassword := ps.Auth == "ss" || ps.Auth == "userpass" || needsChannelAuth
+	if needsPassword {
+		if n.GostPassword == "" {
+			if old != nil && old.Mode == "gost" && old.GostPassword != "" {
+				n.GostPassword = old.GostPassword
+			} else {
+				n.GostPassword = randomPassword(20)
+			}
+		}
+	} else if ps.Auth == "none" {
+		n.GostUsername = ""
+		n.GostPassword = ""
+	} else {
+		n.GostPassword = ""
+	}
+
+	n.Protocol = strings.ToUpper(n.GostProtocol) + "+" + strings.ToUpper(n.GostTransport)
 
 	n.Name = strings.TrimSpace(in.Name)
 	if n.Name == "" {
-		n.Name = "GOST-" + host
+		if n.GostLocal {
+			n.Name = "GOST-本机落地"
+		} else {
+			n.Name = "GOST-" + strings.TrimSpace(in.TargetHost)
+		}
 	}
-
-	// 合成指向落地机的 SIP002 ss 链接（客户端链接与二维码逻辑全部复用）。
-	cred := base64.RawURLEncoding.EncodeToString([]byte(cipher + ":" + password))
-	frag := strings.ReplaceAll(url.QueryEscape(n.Name), "+", "%20")
-	n.LandingLink = fmt.Sprintf("ss://%s@%s#%s", cred, net.JoinHostPort(host, strconv.Itoa(port)), frag)
 
 	if err := s.applyCommon(n, in, old, false); err != nil {
 		return nil, err
 	}
+	if n.GostLocal {
+		n.TargetHost = "127.0.0.1"
+		n.TargetPort = n.ListenPort
+	} else {
+		n.TargetHost = strings.TrimSpace(in.TargetHost)
+		if n.TargetHost == "" {
+			return nil, fmt.Errorf("请填写落地机的公网 IP 或域名")
+		}
+		if net.ParseIP(n.TargetHost) == nil && !validHostname(n.TargetHost) {
+			return nil, fmt.Errorf("落地地址无效: %s", n.TargetHost)
+		}
+		n.TargetPort = in.TargetPort
+		if n.TargetPort <= 0 || n.TargetPort > 65535 {
+			return nil, fmt.Errorf("落地端口无效")
+		}
+	}
+	if err := gostmgr.ValidateGostNode(n); err != nil {
+		return nil, err
+	}
+	landing, err := gostmgr.GostClientURL(n, n.TargetHost, n.TargetPort)
+	if err != nil {
+		return nil, err
+	}
+	n.LandingLink = landing
 	return n, nil
 }
 
@@ -769,6 +829,11 @@ func portFree(port int) bool {
 		return false
 	}
 	_ = l.Close()
+	u, err := net.ListenPacket("udp", fmt.Sprintf(":%d", port))
+	if err != nil {
+		return false
+	}
+	_ = u.Close()
 	return true
 }
 

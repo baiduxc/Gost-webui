@@ -19,7 +19,7 @@ type RateSpec struct {
 	OutBps  int64 `json:"outBps"`
 }
 
-// Node 是一个中转节点：把本机某端口的 TCP/UDP 流量转发到落地机。
+// Node 是一个中转或本机落地节点。
 type Node struct {
 	ID         string `json:"id"`
 	Name       string `json:"name"`
@@ -40,12 +40,22 @@ type Node struct {
 	// SubToken 是该节点的专属订阅令牌，用于公开订阅入口按令牌定位节点。
 	SubToken string `json:"subToken,omitempty"`
 
-	// Mode 为节点类型：link（粘贴落地机链接，默认）/ gost（落地机用 GOST 自建 ss 服务）。
+	// Mode 为节点类型：link（粘贴落地机链接，默认）/ gost（GOST 原生代理服务）。
 	// 空值视为 link，兼容历史节点。
 	Mode string `json:"mode,omitempty"`
-	// GostCipher / GostPassword 仅 gost 模式使用（落地机 ss 服务的加密方式与密码）。
+	// GostLocal 表示代理服务直接运行在安装本面板的机器上；false 表示远程落地。
+	GostLocal bool `json:"gostLocal,omitempty"`
+	// GostProtocol / GostTransport 分别是 GOST 的代理处理协议与传输通道。
+	// 旧节点缺省时按 ss + tcp 处理。
+	GostProtocol  string `json:"gostProtocol,omitempty"`
+	GostTransport string `json:"gostTransport,omitempty"`
+	// GostUsername / GostPassword 是 HTTP、SOCKS、Relay 等协议的凭据。
+	// Shadowsocks 使用 GostCipher 作为加密方法、GostPassword 作为密码。
+	GostUsername string `json:"gostUsername,omitempty"`
 	GostCipher   string `json:"gostCipher,omitempty"`
 	GostPassword string `json:"gostPassword,omitempty"`
+	// GostPath 是 WebSocket / gRPC 等通道的服务路径。
+	GostPath string `json:"gostPath,omitempty"`
 
 	Quota QuotaSpec `json:"quota"`
 	Rate  RateSpec  `json:"rate"`
@@ -65,7 +75,9 @@ type Node struct {
 // ServiceNames 返回该节点在 gost 中对应的服务名。
 func (n *Node) ServiceNames() []string {
 	names := []string{TCPName(n.ID)}
-	if n.UDP {
+	// GOST 本机落地只有 Shadowsocks 的 UDP 扩展会生成第二个服务；
+	// 远程中转和普通链接仍按 UDP 开关生成第二个透传服务。
+	if n.UDP && (!n.GostLocal || n.Mode != "gost" || n.GostProtocol == "" || n.GostProtocol == "ss") {
 		names = append(names, UDPName(n.ID))
 	}
 	return names

@@ -11,6 +11,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"gost-webui/internal/gostmgr"
 	"gost-webui/internal/link"
 	"gost-webui/internal/model"
 )
@@ -27,6 +28,17 @@ type Result struct {
 
 // clientLink 解析并改写单个节点的落地链接，返回指向中转机的链接与解析结果。
 func clientLink(n *model.Node, host string) (string, *link.Info, error) {
+	if n.Mode == "gost" {
+		out, err := gostmgr.GostClientURL(n, host, n.ListenPort)
+		if err != nil {
+			return "", nil, err
+		}
+		// 标准 ss:// 链接仍返回解析结果，便于继续生成 Clash 配置。
+		if info, parseErr := link.Parse(out); parseErr == nil {
+			return out, info, nil
+		}
+		return out, nil, nil
+	}
 	if strings.TrimSpace(n.LandingLink) == "" {
 		return "", nil, fmt.Errorf("缺少落地链接")
 	}
@@ -134,11 +146,11 @@ func ClashYAML(nodes []*model.Node, host, name string) (string, *Result, error) 
 		"proxies": append([]string{"自动选择", "DIRECT"}, uniq...),
 	}
 	urlTest := map[string]any{
-		"name":     "自动选择",
-		"type":     "url-test",
-		"proxies":  uniq,
-		"url":      "http://www.gstatic.com/generate_204",
-		"interval": 300,
+		"name":      "自动选择",
+		"type":      "url-test",
+		"proxies":   uniq,
+		"url":       "http://www.gstatic.com/generate_204",
+		"interval":  300,
 		"tolerance": 50,
 	}
 
