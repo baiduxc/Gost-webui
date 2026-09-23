@@ -64,7 +64,6 @@ button, a, input, select, textarea { -webkit-tap-highlight-color: transparent; }
 .topbar h1 { font-family: var(--font-display); font-size: clamp(32px, 4vw, 49px); font-weight: 700; line-height: 1.5; letter-spacing: .13em; margin-top: 10px; }
 .hero-copy p { margin: 4px 0 22px; color: #193f4d; font-family: var(--font-display); font-weight: 600; letter-spacing: .15em; font-size: 16px; }
 .hero-note { color: #264f5b; font-size: 11px; font-weight: 700; letter-spacing: .3em; }
-.hero-poem { color: #163d48; font-family: var(--font-display); line-height: 2.25; font-size: 14px; font-weight: 700; letter-spacing: .3em; padding: 16px 18px 16px 24px; background: rgba(242, 250, 247, .72); border-left: 2px solid rgba(50, 116, 100, .46); border-radius: 8px; box-shadow: 0 10px 30px rgba(26, 69, 70, .1); backdrop-filter: blur(8px); text-shadow: 0 1px 8px rgba(255,255,255,.88); }
 .content { padding: 0 36px 36px; }
 .card, .table-wrap, .modal-box, .login-card { border-radius: var(--radius-lg); box-shadow: 0 12px 32px rgba(0, 13, 15, .16); }
 .card { padding: 28px; backdrop-filter: blur(18px); }
@@ -190,7 +189,6 @@ main { min-height: calc(100vh - 76px); }
   .topbar { min-height: 223px; padding: 25px 22px; }
   .topbar h1 { font-size: 34px; }
   .hero-copy p { font-size: 14px; }
-  .hero-poem { display: none; }
   .content { padding: 0 12px 24px; }
   .card { padding: 20px; }
   .node-workspace { padding: 20px 12px 10px; }
