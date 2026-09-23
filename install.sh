@@ -73,14 +73,14 @@ if command -v apt-get >/dev/null 2>&1; then
   pkg_install() { DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "$@" >/dev/null; }
   info "安装基础依赖 (apt)…"
   apt-get update -qq >/dev/null 2>&1 || true
-  pkg_install ca-certificates curl git tar || true
+  pkg_install ca-certificates curl git tar iproute2 || true
 elif command -v yum >/dev/null 2>&1; then
   pkg_install() { yum install -y -q "$@" >/dev/null; }
   info "安装基础依赖 (yum)…"
-  pkg_install ca-certificates curl git tar || true
+  pkg_install ca-certificates curl git tar iproute || true
 elif command -v apk >/dev/null 2>&1; then
   pkg_install() { apk add --no-cache "$@" >/dev/null; }
-  pkg_install ca-certificates curl git tar || true
+  pkg_install ca-certificates curl git tar iproute2 || true
 else
   warn "未识别的包管理器，假定 curl/git/tar 已安装"
 fi
@@ -458,7 +458,19 @@ write_config() {
   mkdir -p "$CONF_DIR" "$DATA_DIR" "$LOG_DIR" "$PANEL_DIR/bin"
   if [ -f "$CONF_DIR/panel.yml" ]; then
     ok "配置文件已存在，保留原配置: $CONF_DIR/panel.yml"
-    PANEL_PASS="$(grep -E '^\s+password:' "$CONF_DIR/panel.yml" | head -1 | sed 's/.*password:\s*//' | tr -d '"' || true)"
+    local saved_listen saved_base saved_host saved_user
+    saved_listen="$(grep -E '^listen:' "$CONF_DIR/panel.yml" | head -1 | cut -d: -f2- | tr -d '"'"'"'[:space:]' || true)"
+    saved_base="$(grep -E '^base_path:' "$CONF_DIR/panel.yml" | head -1 | cut -d: -f2- | tr -d '"'"'"'[:space:]' || true)"
+    saved_host="$(grep -E '^public_host:' "$CONF_DIR/panel.yml" | head -1 | cut -d: -f2- | tr -d '"'"'"'[:space:]' || true)"
+    saved_user="$(awk '/^admin:/{f=1;next} f&&/^[^[:space:]]/{f=0} f' "$CONF_DIR/panel.yml" | grep -E '^[[:space:]]+username:' | head -1 | cut -d: -f2- | tr -d '"'"'"'[:space:]' || true)"
+    if [ -n "$saved_listen" ]; then
+      local saved_port="${saved_listen##*:}"
+      case "$saved_port" in ''|*[!0-9]*) ;; *) PANEL_PORT="$saved_port" ;; esac
+    fi
+    NORM_BASE="$saved_base"
+    [ -n "$saved_host" ] && PUBLIC_HOST="$saved_host"
+    PANEL_USER="${saved_user:-admin}"
+    PANEL_PASS="$(grep -E '^[[:space:]]+password:' "$CONF_DIR/panel.yml" | head -1 | sed -E 's/.*password:[[:space:]]*//' | tr -d '"'"'"'' || true)"
     return
   fi
   PANEL_USER="${PANEL_USER_IN:-admin}"
@@ -764,12 +776,13 @@ WantedBy=multi-user.target
 EOF
   systemctl daemon-reload
   systemctl enable gost-webui >/dev/null 2>&1 || true
-  systemctl restart gost-webui
+  systemctl restart gost-webui >/dev/null 2>&1 || true
   sleep 2
   if systemctl is-active --quiet gost-webui; then
     ok "systemd 服务已启动: gost-webui"
   else
-    warn "服务未正常启动，请查看: journalctl -u gost-webui -n 50 --no-pager"
+    warn "服务未正常启动，最近日志如下："
+    journalctl -u gost-webui -n 50 --no-pager 2>/dev/null || true
   fi
 }
 
@@ -796,7 +809,7 @@ print_summary() {
   fi
   echo "  用户名   : ${PANEL_USER:-admin}"
   echo "  登录密码 : ${PANEL_PASS:-（见 ${CONF_DIR}/panel.yml）}"
-  echo "  访问路径 : ${norm_base:-/}（可在面板「系统设置」中修改）"
+  echo "  访问路径 : ${NORM_BASE:-/}（可在面板「系统设置」中修改）"
   echo "  配置文件 : ${CONF_DIR}/panel.yml"
   echo "  数据目录 : ${DATA_DIR}"
   echo "  日志     : ${LOG_DIR}"
@@ -839,22 +852,58 @@ main() {
   write_config
   install_systemd
   install_goui
-  open_firewall_port "$PANEL_PORT"
   check_listen_port
+  open_firewall_port "$PANEL_PORT"
   print_summary
 }
 
-# 确认面板确实在监听（0.0.0.0 表示所有网卡）
+# 按 systemd 主进程确认实际监听地址，兼容旧配置、面板内改端口及精简系统。
 check_listen_port() {
-  local line
-  line="$( (ss -lntp 2>/dev/null || netstat -lntp 2>/dev/null) | grep -E "[:.]${PANEL_PORT}\b" | head -1 || true )"
-  if [ -n "$line" ]; then
-    ok "面板监听正常: $(echo "$line" | awk '{print $4}')"
-  elif [ "${NO_SYSTEMD:-0}" = "1" ]; then
+  if [ "${NO_SYSTEMD:-0}" = "1" ]; then
     warn "未检测到面板监听（NO_SYSTEMD=1 时请手动启动）"
-  else
-    warn "未检测到面板监听，请执行: systemctl status gost-webui --no-pager -l"
+    return 0
   fi
+  if ! command -v systemctl >/dev/null 2>&1; then
+    warn "当前系统没有 systemd，已跳过服务监听检查"
+    return 0
+  fi
+
+  local i main_pid listeners line addr detected_port code
+  for i in $(seq 1 60); do
+    if systemctl is-active --quiet gost-webui; then
+      main_pid="$(systemctl show -p MainPID --value gost-webui 2>/dev/null || true)"
+      if [ -n "$main_pid" ] && [ "$main_pid" != "0" ]; then
+        if command -v ss >/dev/null 2>&1; then
+          listeners="$(ss -lntp 2>/dev/null | awk -v needle="pid=$main_pid," 'index($0, needle) { print }')"
+        elif command -v netstat >/dev/null 2>&1; then
+          listeners="$(netstat -lntp 2>/dev/null | awk -v needle="$main_pid/" 'index($0, needle) { print }')"
+        else
+          ok "面板服务运行正常: systemd active（系统未提供端口探测工具）"
+          return 0
+        fi
+        for detected_port in $(printf '%s\n' "$listeners" | awk '{print $4}' | awk -F: '{print $NF}' | tr -cd '0-9\n' | sort -u); do
+          code="$(curl --noproxy '*' -sS -o /dev/null -w '%{http_code}' --max-time 1 "http://127.0.0.1:${detected_port}/" 2>/dev/null || true)"
+          case "$code" in
+            200|301|302|303|307|308)
+              line="$(printf '%s\n' "$listeners" | awk -v suffix=":$detected_port" '$4 ~ suffix "$" { print; exit }')"
+              addr="$(printf '%s\n' "$line" | awk '{print $4}')"
+              PANEL_PORT="$detected_port"
+              ok "面板监听正常: $addr"
+              return 0
+              ;;
+          esac
+        done
+      fi
+    fi
+    sleep 0.5
+  done
+
+  if systemctl is-active --quiet gost-webui; then
+    warn "面板服务仍在运行，但暂未检测到监听端口；最近日志如下："
+  else
+    warn "面板服务启动失败；最近日志如下："
+  fi
+  journalctl -u gost-webui -n 50 --no-pager 2>/dev/null || true
 }
 
 main "$@"
