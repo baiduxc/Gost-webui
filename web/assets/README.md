@@ -1,10 +1,10 @@
-# 幽谷灵境背景
+# Gost面板背景
 
-`spirit-valley.webp` is an original background generated with the built-in ImageGen tool for the selected 幽谷灵境 visual direction. It is bundled locally by Go's existing `//go:embed all:web` directive; no external image service or CDN is required.
+`spirit-valley.webp` is an original background generated with the built-in ImageGen tool for the selected Gost面板 visual direction. It is bundled locally by Go's existing `//go:embed all:web` directive; no external image service or CDN is required.
 
 - Dimensions: 1536 × 1024, WebP, 374,474 bytes.
 - Art direction / generation brief: cinematic Chinese xianxia valley at blue hour; dark blue and emerald pine cliffs, central waterfall and mist, warm lantern-lit pavilion at the upper right, restrained botanical glow along the lower edge; quiet dark left area for headings; landscape only, without text or UI.
-- Reference: the fifth displayed design in the design conversation, 幽谷灵境.
+- Reference: the fifth displayed design in the design conversation, now used by Gost面板.
 - Retained as the earlier night-scene alternative; no longer the active background.
 - Fonts use local system sans-serif and Songti/SimSun serif fallbacks. Icons reuse the existing application's icon set.
 

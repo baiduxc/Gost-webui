@@ -29,11 +29,11 @@ func (s *Server) handleSystemInfo(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"panel": map[string]any{
-			"version":    Version,
-			"listen":     listen,
-			"basePath":   basePath,
-			"startedAt":  s.started.Unix(),
-			"uptime":     int64(time.Since(s.started).Seconds()),
+			"version":     Version,
+			"listen":      listen,
+			"basePath":    basePath,
+			"startedAt":   s.started.Unix(),
+			"uptime":      int64(time.Since(s.started).Seconds()),
 			"runtimeOS":   met.RuntimeOS,
 			"runtimeArch": met.RuntimeArch,
 			"configFile":  cfgPath,
@@ -43,8 +43,8 @@ func (s *Server) handleSystemInfo(w http.ResponseWriter, r *http.Request) {
 			"sampledAt": metAt.Unix(),
 		},
 		"gost": map[string]any{
-			"process":   gst,
-			"reachable": s.ctl.GostReachable(),
+			"process":    gst,
+			"reachable":  s.ctl.GostReachable(),
 			"configFile": s.cfg.Gost.ConfigFile,
 			"logFile":    s.cfg.Gost.LogFile,
 			"bin":        s.cfg.Gost.Bin,
@@ -89,8 +89,11 @@ func (s *Server) handleSystemUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Listen != nil {
 		v := strings.TrimSpace(*req.Listen)
+		if port, err := strconv.Atoi(v); err == nil && port >= 1 && port <= 65535 {
+			v = ":" + strconv.Itoa(port)
+		}
 		if !validListen(v) {
-			writeErr(w, http.StatusBadRequest, "监听地址格式不正确，例如 :8787 或 0.0.0.0:8787")
+			writeErr(w, http.StatusBadRequest, "面板端口不正确，请输入 1-65535")
 			return
 		}
 		if err := s.ctl.Store.SetSetting("panel_listen", v); err != nil {
@@ -113,9 +116,9 @@ func (s *Server) handleSystemUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":         true,
-		"listen":     s.effectiveListen(),
-		"basePath":   s.effectiveBasePath(),
+		"ok":          true,
+		"listen":      s.effectiveListen(),
+		"basePath":    s.effectiveBasePath(),
 		"needRestart": true,
 	})
 }
@@ -178,18 +181,18 @@ func (s *Server) handleNotifyGet(w http.ResponseWriter, r *http.Request) {
 		cpu, mem, disk = m.CPUThreshold, m.MemThreshold, m.DiskThreshold
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"enabled":   cfg.Enabled,
-		"token":     alerts.MaskToken(cfg.Token),
-		"hasToken":  cfg.Token != "",
-		"chatId":    cfg.ChatID,
-		"apiBase":   cfg.APIBase,
-		"cooldown":  cfg.Cooldown,
-		"events":    events,
-		"allEvents": notify.AllEvents(),
+		"enabled":           cfg.Enabled,
+		"token":             alerts.MaskToken(cfg.Token),
+		"hasToken":          cfg.Token != "",
+		"chatId":            cfg.ChatID,
+		"apiBase":           cfg.APIBase,
+		"cooldown":          cfg.Cooldown,
+		"events":            events,
+		"allEvents":         notify.AllEvents(),
 		"trafficThresholds": th,
-		"cpu":  cpu,
-		"mem":  mem,
-		"disk": disk,
+		"cpu":               cpu,
+		"mem":               mem,
+		"disk":              disk,
 	})
 }
 

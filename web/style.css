@@ -266,19 +266,6 @@ select::-ms-expand { display: none; }
   border: 1px solid var(--color-border);
   padding: var(--space-4xl);
 }
-.login-card .mark {
-  width: 36px;
-  height: 36px;
-  background: var(--color-surface-secondary);
-  border: 1px solid var(--color-border);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: 700;
-  font-size: 0.8125rem;
-  letter-spacing: 0.04em;
-  margin-bottom: var(--space-2xl);
-}
 .login-card h1 { font-size: 1.5rem; font-weight: 800; margin: 0 0 var(--space-sm); }
 .login-card .sub {
   font-size: var(--text-caption);
@@ -309,18 +296,6 @@ select::-ms-expand { display: none; }
   padding: 0 var(--space-2xl) var(--space-2xl);
   border-bottom: 1px solid var(--color-border-light);
   margin-bottom: var(--space-lg);
-}
-.brand .mark {
-  width: 36px;
-  height: 36px;
-  background: var(--color-surface-secondary);
-  border: 1px solid var(--color-border);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.75rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
 }
 .brand .name { font-size: 0.9375rem; font-weight: 700; line-height: 1.2; }
 .brand .sub { font-size: var(--text-label); color: var(--color-text-tertiary); letter-spacing: 0.06em; text-transform: uppercase; }
@@ -579,6 +554,14 @@ td.ops .btn { padding: 4px 10px; font-size: 0.75rem; }
   max-height: 160px;
   overflow: auto;
 }
+.command-block {
+  margin: 0;
+  max-height: 320px;
+  white-space: pre-wrap;
+  word-break: normal;
+  overflow-wrap: anywhere;
+}
+.command-block code { font: inherit; }
 pre.logs {
   background: var(--color-surface-secondary);
   border: 1px solid var(--color-border);

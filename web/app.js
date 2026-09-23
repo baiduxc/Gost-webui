@@ -1,4 +1,4 @@
-/* GOST 面板 · 前端逻辑 · 幽谷灵境 */
+/* GOST 面板 · 前端逻辑 */
 'use strict';
 
 /* ---------------- 基础 ---------------- */
@@ -50,7 +50,6 @@ const icon = (name, cls = '') =>
 /* ---------------- 状态 ---------------- */
 let state = {
   view: 'overview',
-  selectedNodeId: null,
   nodes: [],
   overview: null,
   system: null,
@@ -412,16 +411,14 @@ function renderNodes() {
   const nodes = state.nodes;
   const active = nodes.filter(n => n.enabled && !(n.live && n.live.quotaBlocked)).length;
   $('#nodesSummary').textContent = `${nodes.length} 个节点 · ${active} 个已启用 · 本月 ${fmtBytes(nodes.reduce((sum, n) => sum + (n.monthIn || 0) + (n.monthOut || 0), 0))}`;
-  if (!nodes.some(n => n.id === state.selectedNodeId)) state.selectedNodeId = nodes[0]?.id || null;
   if (!nodes.length) {
     wrap.innerHTML = '<div class="empty"><span class="empty-title">此间尚无连接</span><p>添加第一个节点，开启你的中转之旅。</p><button class="btn secondary" data-act="add">添加节点</button></div>';
-    renderNodeInspector();
     return;
   }
   wrap.innerHTML = `<table>
     <thead><tr><th>节点名称 / 落地机</th><th>监听端口</th><th>本月用量 / 配额</th><th>状态</th><th class="right">操作</th></tr></thead>
-    <tbody>${nodes.map(n => `<tr class="${n.id === state.selectedNodeId ? 'selected' : ''}">
-      <td><button class="node-select" data-act="select" data-id="${esc(n.id)}" aria-pressed="${n.id === state.selectedNodeId}">${icon('server')}<span><b>${esc(n.name)}</b><small>${esc(n.protocol || 'TCP')}${n.mode === 'gost' ? ' · GOST' : ''}${n.udp ? ' · TCP+UDP' : ''} / ${n.mode === 'gost' && n.gostLocal ? '本机落地' : `${esc(n.targetHost)}:${n.targetPort}`}</small></span></button></td>
+    <tbody>${nodes.map(n => `<tr>
+      <td><button class="node-select" data-act="detail" data-id="${esc(n.id)}" aria-label="查看${esc(n.name)}详情">${icon('server')}<span><b>${esc(n.name)}</b><small>${esc(n.protocol || 'TCP')}${n.mode === 'gost' ? ' · GOST' : ''}${n.udp ? ' · TCP+UDP' : ''} / ${n.mode === 'gost' && n.gostLocal ? '本机落地' : `${esc(n.targetHost)}:${n.targetPort}`}</small></span></button></td>
       <td class="mono">${n.listenPort}</td>
       <td class="node-quota"><span class="mono">${fmtBytes((n.monthIn || 0) + (n.monthOut || 0))}</span>${quotaCell(n)}</td>
       <td><button class="node-toggle" data-act="toggle" data-id="${esc(n.id)}" role="switch" aria-checked="${!!n.enabled}" aria-label="${n.enabled ? '停用' : '启用'}${esc(n.name)}"><span class="toggle-track"></span></button>${statusTag(n.enabled, n.live && n.live.quotaBlocked)}</td>
@@ -437,28 +434,7 @@ function renderNodes() {
         </div>
       </div></td>
     </tr>`).join('')}</tbody></table>`;
-  renderNodeInspector();
 }
-
-function renderNodeInspector() {
-  const n = state.nodes.find(n => n.id === state.selectedNodeId);
-  const panel = $('#nodeInspector');
-  if (!n) { panel.innerHTML = '<div class="empty"><span class="empty-title">静候连接</span><p>节点的状态与用量<br>将在这里一目了然。</p></div>'; return; }
-  panel.innerHTML = `<div class="inspector-heading"><span class="eyebrow">NODE / 连接详情</span><h2>${esc(n.name)}</h2>${statusTag(n.enabled, n.live && n.live.quotaBlocked)}</div>
-    <dl class="node-facts"><div><dt>监听端口</dt><dd>${n.listenPort}</dd></div><div><dt>当前连接</dt><dd>${n.live?.currentConns || 0}</dd></div><div><dt>传输协议</dt><dd>${esc(n.protocol || 'TCP')}${n.udp ? ' / UDP' : ''}</dd></div><div><dt>今日上行</dt><dd>${fmtBytes(n.todayIn)}</dd></div><div><dt>今日下行</dt><dd>${fmtBytes(n.todayOut)}</dd></div></dl>
-    <div class="inspector-quota"><div class="desc">流量配额</div>${quotaCell(n)}</div>
-    <dl class="node-facts"><div><dt>本月用量</dt><dd>${fmtBytes((n.monthIn || 0) + (n.monthOut || 0))}</dd></div><div><dt>创建时间</dt><dd>${n.createdAt ? fmtTime(n.createdAt) : '—'}</dd></div></dl>
-    <div class="inspector-actions"><button class="btn secondary" data-inspect="copy">${icon('copy')}复制链接</button><button class="btn secondary" data-inspect="edit">${icon('edit')}编辑节点</button></div>`;
-}
-
-$('#nodeInspector').addEventListener('click', async e => {
-  const btn = e.target.closest('button[data-inspect]');
-  const node = state.nodes.find(n => n.id === state.selectedNodeId);
-  if (!btn || !node) return;
-  if (btn.dataset.inspect === 'edit') { openNodeForm(node); return; }
-  try { const r = await api(`api/nodes/${node.id}/link`); if (r?.url) await copyText(r.url); }
-  catch (err) { toast(err.message, 'err'); }
-});
 
 function quotaCell(n) {
   if (!n.quota || !n.quota.enabled || !n.quota.bytes) return '<span class="tertiary">不限</span>';
@@ -476,8 +452,6 @@ $('#nodeTable').addEventListener('click', async e => {
   if (!btn) return;
   const id = btn.dataset.id;
   if (btn.dataset.act === 'add') { openNodeForm(null); return; }
-  if (btn.dataset.act === 'select') { state.selectedNodeId = id; renderNodes(); return; }
-
   // 下拉菜单开合
   if (btn.dataset.act === 'menu') {
     e.stopPropagation();
@@ -1035,7 +1009,7 @@ async function renderDeploy(node, sel) {
       <div class="notice" style="margin-top:12px">${(d.steps || []).map(s => esc(s)).join('<br>')}</div>
       <details style="margin-top:16px">
         <summary class="hint" style="cursor:pointer">查看面板生成的服务配置</summary>
-        <div class="code-box" style="margin-top:10px">${esc(d.config)}</div>
+        <pre class="code-box command-block" style="margin-top:10px"><code>${esc(d.config)}</code></pre>
       </details>`;
     return;
   }
@@ -1046,23 +1020,23 @@ async function renderDeploy(node, sel) {
     <div class="notice">${(d.steps || []).map(s => esc(s)).join('<br>')}</div>
 
     <div class="hint" style="margin-top:16px">① 安装 GOST · 方式一：下载预编译二进制（自动识别架构）</div>
-    <div class="code-box">${esc(d.installBinaryCmd)}</div>
+    <pre class="code-box command-block"><code>${esc(d.installBinaryCmd)}</code></pre>
     <button class="btn secondary sm" id="copyInstallBinBtn" style="margin-top:8px">${icon('copy')} 复制</button>
 
     <div class="hint" style="margin-top:16px">① 安装 GOST · 方式二：官方安装脚本</div>
-    <div class="code-box">${esc(d.installScriptCmd)}</div>
+    <pre class="code-box command-block"><code>${esc(d.installScriptCmd)}</code></pre>
     <button class="btn secondary sm" id="copyInstallScriptBtn" style="margin-top:8px">${icon('copy')} 复制</button>
 
     <div class="hint" style="margin-top:16px">② 保存代理服务配置到 ${esc(d.confPath)}</div>
-    <div class="code-box">${esc(d.saveCommand)}</div>
+    <pre class="code-box command-block"><code>${esc(d.saveCommand)}</code></pre>
     <button class="btn secondary sm" id="copySaveBtn" style="margin-top:8px">${icon('copy')} 复制</button>
 
     <div class="hint" style="margin-top:16px">③ 注册为 systemd 后台服务（自动后台运行 + 开机自启）</div>
-    <div class="code-box">${esc(d.serviceCommand)}</div>
+    <pre class="code-box command-block"><code>${esc(d.serviceCommand)}</code></pre>
     <button class="btn secondary sm" id="copyServiceBtn" style="margin-top:8px">${icon('copy')} 复制</button>
 
     <div class="hint" style="margin-top:16px">（可选）前台临时运行，用于快速测试</div>
-    <div class="code-box">${esc(d.runCommand)}</div>
+    <pre class="code-box command-block"><code>${esc(d.runCommand)}</code></pre>
     <button class="btn secondary sm" id="copyRunBtn" style="margin-top:8px">${icon('copy')} 复制</button>
   `;
   $('#copyInstallBinBtn').onclick = () => copyText(d.installBinaryCmd);
@@ -1299,7 +1273,10 @@ function renderSystem() {
   const p = sys.panel || {};
   const met = (sys.host && sys.host.metrics) || {};
 
-  if (document.activeElement !== $('#sysListen')) $('#sysListen').value = p.listen || '';
+  if (document.activeElement !== $('#sysListen')) {
+    const port = String(p.listen || '').match(/:(\d+)$/)?.[1] || String(p.listen || '').match(/^\d+$/)?.[0] || '';
+    $('#sysListen').value = port;
+  }
   if (document.activeElement !== $('#sysBasePath')) $('#sysBasePath').value = p.basePath || '';
 
   const host = location.host;
