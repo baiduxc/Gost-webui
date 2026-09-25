@@ -1,5 +1,5 @@
 # ---------- 面板构建 ----------
-FROM golang:1.25-alpine AS panel
+FROM golang:1.26-alpine AS panel
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -7,7 +7,7 @@ COPY . .
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/gost-webui .
 
 # ---------- gost 构建（源码 master：含 vmess / API 配额，官方发行版无 vmess） ----------
-FROM golang:1.25-alpine AS gostbin
+FROM golang:1.26-alpine AS gostbin
 RUN apk add --no-cache git
 WORKDIR /gost
 ARG GOST_REF=master
