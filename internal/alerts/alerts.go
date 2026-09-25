@@ -28,7 +28,7 @@ type Manager struct {
 	metricsAt   time.Time
 	nodeRunning map[string]bool
 	nodeUDP     map[string]bool
-	nodeTotal   map[string]uint64
+	nodeConns   map[string]uint64
 	quotaLevel  map[string]int
 	windowKey   map[string]int64
 
@@ -46,7 +46,7 @@ func New(st *store.Store, n *notify.Notifier, log *slog.Logger) *Manager {
 		Log:               log,
 		nodeRunning:       map[string]bool{},
 		nodeUDP:           map[string]bool{},
-		nodeTotal:         map[string]uint64{},
+		nodeConns:         map[string]uint64{},
 		quotaLevel:        map[string]int{},
 		windowKey:         map[string]int64{},
 		TrafficThresholds: []int{80, 95},
@@ -169,15 +169,21 @@ func (m *Manager) ObserveNodes(ctx context.Context, nodes []*model.Node, live ma
 		m.nodeRunning[n.ID] = now
 		m.mu.Unlock()
 
-		// 2) 新客户端连接（用累计连接数增量判断，可捕获采样间隙的短连接）
-		if seen2, ok2 := m.nodeTotal[n.ID]; ok2 && lv.TotalConns > seen2 {
-			delta := lv.TotalConns - seen2
-			text := fmt.Sprintf("<b>[GOST 面板] 节点迎来新连接</b>\n节点：%s\n新增客户端：%d\n当前在线：%d",
-				n.Name, delta, lv.CurrentConns)
-			_ = m.Notify.Send(ctx, notify.EventNodeClient, "", text)
+		// 2) 客户端上线/下线：仅在线人数 0↔N 状态翻转时各通知一次。
+		//    （gost 的累计连接数把心跳、探测、短连接全算进去，按增量发必然刷屏）
+		if prevCur, seen := m.nodeConns[n.ID]; seen {
+			if prevCur == 0 && lv.CurrentConns > 0 {
+				text := fmt.Sprintf("<b>[GOST 面板] 客户端已连接节点</b>\n节点：%s\n端口：%d\n当前在线：%d",
+					n.Name, n.ListenPort, lv.CurrentConns)
+				_ = m.Notify.Send(ctx, notify.EventNodeClient, n.ID+"|online", text)
+			} else if prevCur > 0 && lv.CurrentConns == 0 {
+				text := fmt.Sprintf("<b>[GOST 面板] 节点客户端已全部断开</b>\n节点：%s\n端口：%d",
+					n.Name, n.ListenPort)
+				_ = m.Notify.Send(ctx, notify.EventNodeClient, n.ID+"|offline", text)
+			}
 		}
 		m.mu.Lock()
-		m.nodeTotal[n.ID] = lv.TotalConns
+		m.nodeConns[n.ID] = lv.CurrentConns
 		m.mu.Unlock()
 
 		// 3) 流量超限暂停

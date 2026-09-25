@@ -3,6 +3,7 @@ package alerts
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -21,10 +22,10 @@ func TestNodeClientNotify(t *testing.T) {
 	var texts []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
-		var form map[string]string
+		var form map[string]any
 		_ = json.Unmarshal(b, &form)
 		mu.Lock()
-		texts = append(texts, form["text"])
+		texts = append(texts, fmt.Sprint(form["text"]))
 		mu.Unlock()
 		w.Write([]byte(`{"ok":true}`))
 	}))
@@ -35,7 +36,7 @@ func TestNodeClientNotify(t *testing.T) {
 		TrafficThresholds: []int{80, 95},
 		nodeRunning:       map[string]bool{},
 		nodeUDP:           map[string]bool{},
-		nodeTotal:         map[string]uint64{},
+		nodeConns:         map[string]uint64{},
 		quotaLevel:        map[string]int{},
 		windowKey:         map[string]int64{},
 	}
@@ -45,37 +46,38 @@ func TestNodeClientNotify(t *testing.T) {
 		Events: map[string]bool{notify.EventNodeClient: true},
 	})
 
-	n := &model.Node{ID: "n1", Name: "东京节点", ListenPort: 45678, TargetHost: "1.2.3.4", TargetPort: 8443, Enabled: true}
-	live1 := map[string]*model.Live{"n1": {TotalConns: 0, CurrentConns: 0, Running: true}}
-	m.nodeRunning["n1"] = true // 避免上线事件干扰
-	m.ObserveNodes(context.Background(), []*model.Node{n}, live1)
-
-	live2 := map[string]*model.Live{"n1": {TotalConns: 2, CurrentConns: 1, Running: true}}
-	m.ObserveNodes(context.Background(), []*model.Node{n}, live2)
-
-	// 无变化不应再发
-	m.ObserveNodes(context.Background(), []*model.Node{n}, live2)
-
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		mu.Lock()
-		got := len(texts)
-		mu.Unlock()
-		if got >= 1 {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
+	n := &model.Node{ID: "n1", Name: "新加坡", ListenPort: 45678, TargetHost: "1.2.3.4", TargetPort: 8443, Enabled: true}
+	m.nodeRunning["n1"] = true // 屏蔽节点上下线事件，只测客户端连接事件
+	send := func(cur, total uint64) {
+		m.ObserveNodes(context.Background(), []*model.Node{n},
+			map[string]*model.Live{"n1": {CurrentConns: cur, TotalConns: total, Running: true}})
 	}
+
+	// 首次建立基线（不算事件）
+	send(0, 100)
+	// 模拟日志里的刷屏场景：15 次短连接增长，在线始终在 0/1 间抖动
+	for _, s := range []struct{ cur, total uint64 }{
+		{1, 101}, {1, 101}, {0, 102}, {0, 103}, {2, 107}, {1, 108}, // 在线 0->N：应发 1 条上线
+		{0, 109},                               // N->0：应发 1 条下线
+		{0, 116}, {0, 117}, {5, 120}, {2, 121}, // 再上线：1 条
+	} {
+		send(s.cur, s.total)
+	}
+
+	// 15 次短连接抖动应只产生 2 条事件：首次上线 + 全部断开。
+	// （再次上线在 600s 冷却窗口内，被 Notifier 冷却抑制——防抖动属预期行为）
+	time.Sleep(400 * time.Millisecond)
 
 	mu.Lock()
 	defer mu.Unlock()
-	if len(texts) != 1 {
-		t.Fatalf("期望恰好 1 条连接通知, got %d: %v", len(texts), texts)
+	if len(texts) != 2 {
+		t.Fatalf("期望恰好 2 条（上线/断开），got %d: %v", len(texts), texts)
 	}
-	for _, want := range []string{"东京节点", "新增客户端：2", "当前在线：1"} {
-		if !contains(texts[0], want) {
-			t.Fatalf("通知缺少 %q: %s", want, texts[0])
-		}
+	if !contains(texts[0], "客户端已连接节点") || !contains(texts[0], "当前在线：1") {
+		t.Fatalf("第1条应为上线通知: %s", texts[0])
+	}
+	if !contains(texts[1], "客户端已全部断开") {
+		t.Fatalf("第2条应为下线通知: %s", texts[1])
 	}
 }
 

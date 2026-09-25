@@ -41,7 +41,7 @@ func AllEvents() map[string]string {
 		EventPanelStop:    "面板停止",
 		EventNodeAdded:    "新增节点",
 		EventNodeDeleted:  "删除节点",
-		EventNodeClient:   "客户端连接",
+		EventNodeClient:   "客户端上下线",
 	}
 }
 
