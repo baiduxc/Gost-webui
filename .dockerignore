@@ -1,0 +1,11 @@
+.git
+.github
+dist
+bin
+data
+*.log
+*.tar.gz
+design-qa.md
+DEVELOPMENT.md
+Dockerfile
+docker-compose.yml

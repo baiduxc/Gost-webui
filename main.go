@@ -29,7 +29,7 @@ import (
 	"gost-webui/internal/store"
 )
 
-var version = "1.7.0"
+var version = "1.7.1"
 
 //go:embed all:web
 var embeddedWeb embed.FS

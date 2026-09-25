@@ -28,6 +28,7 @@ type Manager struct {
 	metricsAt   time.Time
 	nodeRunning map[string]bool
 	nodeUDP     map[string]bool
+	nodeTotal   map[string]uint64
 	quotaLevel  map[string]int
 	windowKey   map[string]int64
 
@@ -45,6 +46,7 @@ func New(st *store.Store, n *notify.Notifier, log *slog.Logger) *Manager {
 		Log:               log,
 		nodeRunning:       map[string]bool{},
 		nodeUDP:           map[string]bool{},
+		nodeTotal:         map[string]uint64{},
 		quotaLevel:        map[string]int{},
 		windowKey:         map[string]int64{},
 		TrafficThresholds: []int{80, 95},
@@ -167,14 +169,25 @@ func (m *Manager) ObserveNodes(ctx context.Context, nodes []*model.Node, live ma
 		m.nodeRunning[n.ID] = now
 		m.mu.Unlock()
 
-		// 2) 流量超限暂停
+		// 2) 新客户端连接（用累计连接数增量判断，可捕获采样间隙的短连接）
+		if seen2, ok2 := m.nodeTotal[n.ID]; ok2 && lv.TotalConns > seen2 {
+			delta := lv.TotalConns - seen2
+			text := fmt.Sprintf("<b>[GOST 面板] 节点迎来新连接</b>\n节点：%s\n新增客户端：%d\n当前在线：%d",
+				n.Name, delta, lv.CurrentConns)
+			_ = m.Notify.Send(ctx, notify.EventNodeClient, "", text)
+		}
+		m.mu.Lock()
+		m.nodeTotal[n.ID] = lv.TotalConns
+		m.mu.Unlock()
+
+		// 3) 流量超限暂停
 		if lv.QuotaLimit > 0 && lv.QuotaBlocked {
 			text := fmt.Sprintf("<b>[GOST 面板] 节点流量已达上限，已自动暂停</b>\n节点：%s\n已用：%s / %s（100%%）\n周期结束：%s",
 				n.Name, fmtBytes(lv.QuotaUsed), fmtBytes(lv.QuotaLimit), tsDesc(lv.QuotaUntil))
 			_ = m.Notify.Send(ctx, notify.EventQuotaBlocked, n.ID, text)
 		}
 
-		// 3) 流量预警（按阈值档位，窗口切换后重置）
+		// 4) 流量预警（按阈值档位，窗口切换后重置）
 		if lv.QuotaLimit > 0 && !lv.QuotaBlocked {
 			m.mu.Lock()
 			if m.windowKey[n.ID] != lv.QuotaUntil {

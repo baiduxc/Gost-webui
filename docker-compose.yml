@@ -1,0 +1,23 @@
+services:
+  gost-panel:
+    image: ghcr.io/baiduxc/gost-webui:latest
+    container_name: gost-webui
+    restart: unless-stopped
+    ports:
+      - "8787:8787"       # 面板 Web 界面
+      # - "45678:45678"   # 转发节点监听端口，按需放行/映射
+    environment:
+      ADMIN_USER: admin
+      # 首次启动生效的管理密码，请改成你自己的
+      ADMIN_PASSWORD: SET…WORD
+      # PUBLIC_HOST: 1.2.3.4   # 对外展示的中转机地址
+      # GOST_LOG_LEVEL: info   # trace/debug/info/warn/error/off
+    volumes:
+      - gost-data:/var/lib/gost-webui
+      - gost-logs:/var/log/gost-webui
+      - gost-conf:/etc/gost-webui
+
+volumes:
+  gost-data:
+  gost-logs:
+  gost-conf:

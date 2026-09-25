@@ -286,7 +286,7 @@ function renderOverview() {
   renderHostCards((ov.host && ov.host.metrics) || {});
 
   const series = (ov.series || []).slice(-30);
-  drawChart($('#chart'), series);
+  drawChart($('#chart'), series, { step: 86400 });
 
   const top = ov.top || [];
   if (!top.length) {
@@ -344,8 +344,15 @@ function nodeStatusCell(n) {
 }
 
 /* 流量图表：翡翠上行、淡金下行 */
-function drawChart(canvas, points) {
+function drawChart(canvas, points, opts) {
   if (!canvas) return;
+  opts = opts || {};
+  drawChart._impl = drawChartImpl;
+  drawChartImpl(canvas, points, opts);
+  attachChartHover(canvas);
+}
+
+function drawChartImpl(canvas, points, opts) {
   const dpr = window.devicePixelRatio || 1;
   const w = canvas.clientWidth || 600;
   const h = canvas.clientHeight || 240;
@@ -360,10 +367,12 @@ function drawChart(canvas, points) {
   const cTertiary = css.getPropertyValue('--color-text-tertiary').trim() || '#888';
   const cBorderLight = css.getPropertyValue('--color-border-light').trim() || '#eee';
   const cGold = css.getPropertyValue('--color-gold').trim() || cTertiary;
+  const cCross = css.getPropertyValue('--color-text-secondary').trim() || '#666';
 
   const padL = 62, padR = 26, padT = 12, padB = 28;
   const cw = w - padL - padR, ch = h - padT - padB;
 
+  canvas._chart = null;
   if (!points.length) {
     ctx.fillStyle = cTertiary;
     ctx.font = '13px ' + css.getPropertyValue('--font-sans');
@@ -437,8 +446,97 @@ function drawChart(canvas, points) {
   const ticks = Math.min(6, points.length);
   for (let i = 0; i < ticks; i++) {
     const idx = Math.round(i * (points.length - 1) / Math.max(1, ticks - 1));
-    ctx.fillText(fmtDay(points[idx].ts), px(idx), h - 8);
+    ctx.fillText(opts.hourAxis ? fmtHour(points[idx].ts) : fmtDay(points[idx].ts), px(idx), h - 8);
   }
+
+  canvas._chart = { points, px, py, padL, padT, padB, w, h, stepX,
+    bucket: opts.step || (points.length > 1 ? points[1].ts - points[0].ts : 86400),
+    hourAxis: !!opts.hourAxis, cAccent, cGold, cCross };
+}
+
+/* ---- hover 感应：竖直参考线 + 数据卡（触屏 touch 亦支持） ---- */
+function attachChartHover(canvas) {
+  if (canvas._hoverBound) return;
+  canvas._hoverBound = true;
+  const parent = canvas.parentElement;
+  if (!parent) return;
+  if (getComputedStyle(parent).position === 'static') parent.style.position = 'relative';
+  let tip = parent.querySelector('.chart-tip');
+  if (!tip) {
+    tip = document.createElement('div');
+    tip.className = 'chart-tip hidden';
+    parent.appendChild(tip);
+  }
+  const overlay = (idx) => {
+    const st = canvas._chart;
+    if (!st) return;
+    drawChartImpl(canvas, st.points, { step: st.bucket, hourAxis: st.hourAxis });
+    if (idx == null) return;
+    const g = canvas.getContext('2d');
+    const dpr = window.devicePixelRatio || 1;
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const p = st.points[idx], x = st.px(idx);
+    g.strokeStyle = st.cCross; g.globalAlpha = .45;
+    g.lineWidth = 1; g.setLineDash([4, 4]);
+    g.beginPath(); g.moveTo(x + .5, st.padT); g.lineTo(x + .5, st.h - st.padB); g.stroke();
+    g.setLineDash([]); g.globalAlpha = 1;
+    [[p.in, st.cAccent], [p.out, st.cGold]].forEach(([v, c]) => {
+      g.beginPath(); g.arc(x, st.py(v), 4.5, 0, Math.PI * 2);
+      g.fillStyle = c; g.fill();
+      g.strokeStyle = '#ffffff'; g.lineWidth = 1.5; g.stroke();
+    });
+  };
+  const showAt = (clientX, clientY) => {
+    const st = canvas._chart;
+    if (!st || !st.points.length) return;
+    const rect = canvas.getBoundingClientRect();
+    const mx = clientX - rect.left;
+    let idx = st.stepX > 0 ? Math.round((mx - st.padL) / st.stepX) : 0;
+    idx = Math.max(0, Math.min(st.points.length - 1, idx));
+    overlay(idx);
+    const p = st.points[idx];
+    const label = st.hourAxis ? fmtHourTip(p.ts) : fmtDayTip(p.ts, st.bucket);
+    tip.innerHTML = `<div class="ct-date">${esc(label)}</div>
+      <div class="ct-row"><i style="background:var(--color-accent)"></i>上行 <b>${fmtBytes(p.in || 0)}</b></div>
+      <div class="ct-row"><i style="background:var(--color-gold)"></i>下行 <b>${fmtBytes(p.out || 0)}</b></div>
+      <div class="ct-row ct-total">合计 <b>${fmtBytes((p.in || 0) + (p.out || 0))}</b></div>`;
+    tip.classList.remove('hidden');
+    const tw = tip.offsetWidth, th = tip.offsetHeight;
+    let left = st.px(idx) + 14;
+    if (left + tw > st.w - 4) left = st.px(idx) - tw - 14;
+    if (left < 4) left = 4;
+    let top = clientY - rect.top - th - 12;
+    if (top < 0) top = clientY - rect.top + 18;
+    tip.style.left = left + 'px';
+    tip.style.top = top + 'px';
+  };
+  const clear = () => {
+    tip.classList.add('hidden');
+    overlay(null);
+  };
+  canvas.addEventListener('mousemove', ev => showAt(ev.clientX, ev.clientY));
+  canvas.addEventListener('mouseleave', clear);
+  canvas.addEventListener('touchstart', ev => {
+    const t = ev.touches[0]; if (t) showAt(t.clientX, t.clientY);
+  }, { passive: true });
+  canvas.addEventListener('touchmove', ev => {
+    const t = ev.touches[0]; if (t) showAt(t.clientX, t.clientY);
+  }, { passive: true });
+  canvas.addEventListener('touchend', () => setTimeout(clear, 1200));
+}
+
+function fmtHour(ts) {
+  const d = new Date(ts * 1000);
+  return `${String(d.getHours()).padStart(2, '0')}:00`;
+}
+function fmtHourTip(ts) {
+  const d = new Date(ts * 1000);
+  return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:00 – ${String(d.getHours()).padStart(2, '0')}:59`;
+}
+function fmtDayTip(ts, bucket) {
+  const d = new Date(ts * 1000);
+  const day = `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`;
+  return bucket >= 86400 ? `${day} 全天` : `${day} ${String(d.getHours()).padStart(2, '0')}:00 时段`;
 }
 
 function niceCeil(v) {
@@ -1138,6 +1236,7 @@ async function openDetail(node) {
   const body = $('#detailBody');
   const lv = node.live || {};
   const loadStats = async (range) => {
+    range = range || '7d';
     const r = await api(`api/nodes/${node.id}/stats?range=${range}`).catch(e => { toast(e.message, 'err'); return null; });
     if (!r) return;
     const live = r.live || {};
@@ -1162,29 +1261,19 @@ async function openDetail(node) {
       <div class="card-head">
         <div><h2 style="font-size:15px">流量曲线</h2></div>
         <div class="tabs">
-          <button data-range="24h">24 小时</button>
-          <button data-range="7d" class="active">7 天</button>
-          <button data-range="30d">30 天</button>
+          <button data-range="24h" class="${range === '24h' ? 'active' : ''}">24 小时</button>
+          <button data-range="7d" class="${range === '7d' ? 'active' : ''}">7 天</button>
+          <button data-range="30d" class="${range === '30d' ? 'active' : ''}">30 天</button>
         </div>
       </div>
-      <canvas id="detailChart" height="130" style="width:100%"></canvas>
-      <div class="section-label">客户端链接</div>
-      <div class="code-box" id="detailLink">加载中…</div>
-      <div style="display:flex;gap:24px;margin-top:16px;align-items:flex-start;flex-wrap:wrap">
-        <div class="qr"><img id="detailQR" src="${BASE}api/nodes/${node.id}/qrcode?t=${Date.now()}" alt="二维码"></div>
-        <div class="hint">扫码或复制客户端地址<br>连接地址 <span class="mono">${esc(state.publicHost)}:${node.listenPort}</span></div>
+      <div class="chart-wrap">
+        <canvas id="detailChart" height="130" style="width:100%"></canvas>
       </div>
       ${node.mode === 'gost' ? '<div id="detailDeploy"></div>' : ''}`;
-    drawChart($('#detailChart'), r.points || []);
+    drawChart($('#detailChart'), r.points || [], { step: r.step, hourAxis: range === '24h' });
     $$('#detailBody .tabs button').forEach(b => {
-      b.onclick = () => {
-        $$('#detailBody .tabs button').forEach(x => x.classList.toggle('active', x === b));
-        loadStats(b.dataset.range);
-      };
+      b.onclick = () => loadStats(b.dataset.range);
     });
-    const lr = await api(`api/nodes/${node.id}/link`).catch(() => null);
-    const el = $('#detailLink');
-    if (el) el.textContent = lr && lr.url ? lr.url : '（无法生成：请在系统设置中填写服务器地址）';
     if (node.mode === 'gost') renderDeploy(node, '#detailDeploy');
   };
   loadStats('7d');
@@ -1219,8 +1308,20 @@ async function openNodeSub(node) {
         <div class="hint">GOST 原生协议</div>
         <div class="notice">当前协议或通道需要 GOST 客户端。通用订阅中已包含可传给 <span class="mono">gost -F</span> 的节点地址。</div>
       </div>`;
+  const linkR = await api(`api/nodes/${node.id}/link`).catch(() => null);
+  const clientBlock = `
+    <div class="section-label">客户端连接</div>
+    <div class="sub-item">
+      <div class="hint">节点连接地址 <span class="mono">${esc(state.publicHost)}:${node.listenPort}</span></div>
+      <div class="code-box">${linkR && linkR.url ? esc(linkR.url) : '（无法生成：请在系统设置中填写服务器地址）'}</div>
+      <div class="sub-qr">
+        <div class="qr"><img src="${BASE}api/nodes/${node.id}/qrcode?t=${t}" alt="客户端连接二维码"></div>
+        ${linkR && linkR.url ? `<button class="btn secondary sm" data-copy="${esc(linkR.url)}">复制连接地址</button>` : ''}
+      </div>
+    </div>`;
   body.innerHTML = `
     <div class="notice">${r.enabled ? '' : '<b>该节点已停用，订阅内容为空。</b> '}${schemeNote}</div>
+    ${clientBlock}
     <div class="sub-grid">
       <div class="sub-item">
         <div class="hint">通用订阅（自动识别 Clash / v2rayN）</div>

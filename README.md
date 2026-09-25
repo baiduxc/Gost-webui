@@ -52,8 +52,41 @@ cd gost-webui && sudo bash install.sh
 sudo bash install.sh --gost-bin /root/gost --panel-bin /root/gost-webui
 ```
 
-> 安装过程会自动：放行本机防火墙端口、探测公网 IP、生成随机密码、注册开机自启服务。
-> 云服务器还需要在**控制台安全组**放行面板端口（以及中转节点使用的端口）。
+> 安装过程会自动：放行本机防火墙端口、探测公网 IP、生成随机密码、注册 systemd 服务。
+> 云服务器还需要在**控制台安全组**放行面板端口（以及转发节点使用的端口）。
+
+## Docker 部署
+
+镜像已内置面板与转发引擎 gost（源码编译，支持 vmess 等全协议），amd64 / arm64 多架构。
+
+```bash
+docker run -d --name gost-webui \
+  --restart unless-stopped \
+  -p 8787:8787 \
+  -e ADMIN_USER=admin \
+  -e ADMIN_PASSWORD=*** \
+  -v gost-data:/var/lib/gost-webui \
+  -v gost-logs:/var/log/gost-webui \
+  -v gost-conf:/etc/gost-webui \
+  ghcr.io/baiduxc/gost-webui:latest
+```
+
+打开 `http://服务器IP:8787` 用上面设置的账号登录。节点转发端口按需再加 `-p 45678:45678`。
+
+或使用仓库中的 compose 文件（编辑好密码后）：
+
+```bash
+docker compose up -d
+```
+
+| 环境变量 | 说明 |
+|---|---|
+| `ADMIN_USER` / `ADMIN_PASSWORD` | 首次启动创建管理员；已有数据卷时以面板内设置为准 |
+| `PUBLIC_HOST` | 节点连接地址对外展示用（如域名或 IP） |
+| `GOST_LOG_LEVEL` | 转发引擎日志级别 `trace/debug/info/warn/error/off`，默认 info |
+| `LISTEN` | 改面板监听端口（写进配置，与 `-p` 映射保持一致） |
+
+数据（账号、节点、流量统计）在 `gost-data` 卷；升级只需 `docker pull` 后重建容器。
 
 ## 快速上手
 

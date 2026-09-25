@@ -26,6 +26,7 @@ const (
 	EventPanelStop    = "panelStop"    // 面板停止
 	EventNodeAdded    = "nodeAdded"    // 面板新增节点
 	EventNodeDeleted  = "nodeDeleted"  // 面板删除节点
+	EventNodeClient   = "nodeClient"   // 客户端连接节点
 )
 
 // AllEvents 返回全部事件类型及中文名。
@@ -40,6 +41,7 @@ func AllEvents() map[string]string {
 		EventPanelStop:    "面板停止",
 		EventNodeAdded:    "新增节点",
 		EventNodeDeleted:  "删除节点",
+		EventNodeClient:   "客户端连接",
 	}
 }
 

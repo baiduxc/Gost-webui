@@ -459,7 +459,7 @@ td .mono { line-height: 1.55; }
   box-shadow: var(--shadow-pop), inset 0 1px 0 var(--nd-inner); position: relative; margin: auto;
   backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
 }
-.modal-box.wide { max-width: 880px; }
+.modal-box.wide { max-width: 960px; }
 [data-theme="dark"] .modal-box { background: var(--color-surface); }
 .modal-close { position: absolute; top: 16px; right: 16px; width: 32px; height: 32px; border: 0; border-radius: 10px; background: var(--color-surface-secondary); color: var(--color-text-secondary); font-size: 18px; line-height: 1; cursor: pointer; display: grid; place-items: center; padding: 0; }
 .modal-close:hover { color: var(--color-text-primary); }
