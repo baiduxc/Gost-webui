@@ -31,8 +31,9 @@ if [ -n "$BASE_PATH" ]; then
   NORM_BASE="${NORM_BASE%/}"
 fi
 GOPROXY="${GOPROXY:-https://goproxy.cn,direct}"
-# GitHub 加速域名（如 https://ghfast.top），留空则直连 GitHub
-GH_PROXY="${GH_PROXY:-https://ghfast.top}"
+# GitHub 加速域名（如 https://ghfast.top）。默认空=直连 GitHub；
+# 交互式安装会询问，也可用环境变量 GH_PROXY 或 --gh-proxy 预先指定，留空/回车即直连。
+GH_PROXY="${GH_PROXY:-}"
 # 给 GitHub 地址加上加速前缀
 gh_url() {
   local u="$1"
@@ -413,12 +414,13 @@ usage() {
   -P, --pass <密码>      管理员密码（默认随机生成）
       --gost-bin <路径|URL>  指定 gost 二进制（无法访问 GitHub 时使用）
       --panel-bin <路径|URL> 指定面板二进制（无法访问 GitHub 时使用）
+      --gh-proxy <URL>   GitHub 加速代理域名（如 https://ghfast.top），默认直连
       --uninstall        干净卸载（服务、程序、配置、数据）
   -h, --help             显示帮助
 
 不带参数且为交互式终端时，脚本会依次询问端口/路径/用户名/密码。
 也可用环境变量：PANEL_PORT、BASE_PATH、PANEL_USER、PANEL_PASS、PUBLIC_HOST、
-PANEL_REPO、PANEL_RELEASE_URL、GOST_BIN_URL、PANEL_BIN_URL、GOPROXY、NO_SYSTEMD
+PANEL_REPO、PANEL_RELEASE_URL、GOST_BIN_URL、PANEL_BIN_URL、GH_PROXY、GOPROXY、NO_SYSTEMD
 EOF
 }
 
@@ -431,6 +433,7 @@ parse_args() {
       -P|--pass) PANEL_PASS_IN="${2:-}"; shift 2 2>/dev/null || shift ;;
       --gost-bin|--gost-bin-url) GOST_BIN_SRC="${2:-}"; shift 2 2>/dev/null || shift ;;
       --panel-bin|--panel-bin-url) PANEL_BIN_SRC="${2:-}"; shift 2 2>/dev/null || shift ;;
+      --gh-proxy) GH_PROXY="${2:-}"; shift 2 2>/dev/null || shift ;;
       --uninstall) uninstall_all; exit 0 ;;
       -h|--help) usage; exit 0 ;;
       *) shift ;;
@@ -455,6 +458,18 @@ interactive_config() {
   echo
   echo "---------- 面板初始配置（直接回车使用默认值）----------"
   local v
+  if [ -z "$GH_PROXY" ]; then
+    read -rp "是否使用 GitHub 加速节点下载？输入代理域名（如 https://ghfast.top），留空直连 GitHub: " v || true
+    v="${v%/}"
+    if [ -n "$v" ]; then
+      case "$v" in https://*|http://*) GH_PROXY="$v" ;; *) GH_PROXY="https://$v" ;; esac
+    fi
+    if [ -n "$GH_PROXY" ]; then
+      echo "  将通过加速节点下载: $GH_PROXY"
+    else
+      echo "  直连 GitHub 下载"
+    fi
+  fi
   read -rp "面板端口 [${PANEL_PORT}]: " v || true
   if [ -n "$v" ]; then PANEL_PORT="$v"; fi
   read -rp "访问路径（如 /panel，留空为根路径）[${NORM_BASE:-/}]: " v || true

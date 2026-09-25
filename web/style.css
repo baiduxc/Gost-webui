@@ -434,6 +434,24 @@ td .mono { line-height: 1.55; }
 .chart-box { width: 100%; height: 240px; display: block; }
 .chart-legend { display: flex; gap: var(--space-xl); font-size: var(--text-caption); color: var(--color-text-secondary); margin-top: var(--space-md); }
 .chart-legend .swatch { width: 9px; height: 9px; display: inline-block; margin-right: 6px; vertical-align: -1px; border-radius: 3px; }
+.chart-box { cursor: crosshair; }
+
+/* 图表悬停数据卡：绝对定位浮在曲线上方，不占文档流 */
+.chart-tip {
+  position: absolute; z-index: 60; pointer-events: none;
+  left: 0; top: 0;
+  background: var(--color-surface-strong); border: 1px solid var(--color-border);
+  border-radius: 10px; padding: 10px 14px; min-width: 180px;
+  box-shadow: var(--shadow-pop); font-size: .8125rem; line-height: 1.7;
+  color: var(--color-text-secondary);
+  transition: left .05s linear, top .05s linear;
+}
+.chart-tip.hidden { display: none; }
+.chart-tip .ct-date { font-weight: 700; margin-bottom: 4px; font-size: .75rem; color: var(--color-text-primary); }
+.chart-tip .ct-row { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+.chart-tip .ct-row i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; flex: 0 0 8px; }
+.chart-tip .ct-row b { margin-left: auto; font-family: var(--font-mono); font-weight: 650; color: var(--color-text-primary); }
+.chart-tip .ct-total { border-top: 1px dashed var(--color-border); margin-top: 5px; padding-top: 5px; }
 
 /* ---------- 提示条 ---------- */
 .notice {
