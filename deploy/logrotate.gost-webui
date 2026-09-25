@@ -1,0 +1,14 @@
+# gost-webui 日志轮转策略
+# 安装：cp deploy/logrotate.gost-webui /etc/logrotate.d/gost-webui
+# 说明：面板内置 rotatingWriter 已在 8MB 时自转一轮（gost.log.1），
+# 此配置负责按天压缩归档并限制总量，二者兼容（copytruncate 不打断面板写入）。
+/var/log/gost-webui/*.log {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+    create 0600 root root
+}

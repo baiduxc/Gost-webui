@@ -27,17 +27,21 @@ fi
 
 pkill -f "${PANEL_DIR}/bin/gost-webui" >/dev/null 2>&1 || true
 pkill -f "${PANEL_DIR}/bin/gost" >/dev/null 2>&1 || true
+sleep 1
 
 info "删除程序目录 ${PANEL_DIR}"
 rm -rf "$PANEL_DIR"
 info "删除配置目录 ${CONF_DIR}"
 rm -rf "$CONF_DIR"
+rm -f /usr/local/bin/go-ui
 
 if [ "${KEEP_DATA:-0}" = "1" ]; then
   warn "保留数据与日志：${DATA_DIR} ${LOG_DIR}"
 else
   info "删除数据与日志 ${DATA_DIR} ${LOG_DIR}"
   rm -rf "$DATA_DIR" "$LOG_DIR"
+  rm -rf "${HOME}/.gost" /root/.gost
+  rm -f /tmp/gost_install.log
 fi
 
 ok "卸载完成"

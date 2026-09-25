@@ -235,6 +235,15 @@ func (m *Manager) ApplyConfig(ctx context.Context, cfg *Config) error {
 	return nil
 }
 
+// ClearLog 清空 gost 日志文件（切换 off 时抹掉历史留痕）。
+func (m *Manager) ClearLog() {
+	if m.logFile == "" {
+		return
+	}
+	_ = os.Truncate(m.logFile, 0)
+	_ = os.Remove(m.logFile + ".1")
+}
+
 // ---------- 日志滚动 ----------
 
 type rotatingWriter struct {
@@ -256,7 +265,7 @@ func (w *rotatingWriter) Write(p []byte) (int, error) {
 		if err := os.MkdirAll(filepath.Dir(w.path), 0o755); err != nil {
 			return len(p), nil
 		}
-		f, err := os.OpenFile(w.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+		f, err := os.OpenFile(w.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 		if err != nil {
 			return len(p), nil
 		}
@@ -269,7 +278,7 @@ func (w *rotatingWriter) Write(p []byte) (int, error) {
 	if w.size > w.max {
 		_ = w.f.Close()
 		_ = os.Rename(w.path, w.path+".1")
-		f, err := os.OpenFile(w.path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+		f, err := os.OpenFile(w.path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 		if err == nil {
 			w.f = f
 			w.size = 0

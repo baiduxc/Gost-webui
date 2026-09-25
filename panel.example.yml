@@ -17,3 +17,4 @@ gost:
   api_username: "gost"
   api_password: "devsecret"
   log_file: "./data/logs/gost.log"
+  log_level: "info"   # trace/debug/info/warn/error；warn 以上不记录客户端 IP 与访问域名

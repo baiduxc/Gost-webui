@@ -29,7 +29,7 @@ import (
 	"gost-webui/internal/store"
 )
 
-var version = "1.6.3"
+var version = "1.7.0"
 
 //go:embed all:web
 var embeddedWeb embed.FS
@@ -103,6 +103,12 @@ func main() {
 	}
 	sampleSeconds := cfg.SampleSeconds
 	retentionDays := cfg.RetentionDays
+	gostLogLevel := cfg.Gost.LogLevel
+	if v, ok := st.GetSetting("gost_log_level"); ok {
+		if n := config.NormalizeGostLogLevel(v); n != "" {
+			gostLogLevel = n
+		}
+	}
 	if v, ok := st.GetSetting("sample_seconds"); ok {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			sampleSeconds = n
@@ -148,7 +154,7 @@ func main() {
 		APIUser:   cfg.Gost.APIUser,
 		APIPass:   cfg.Gost.APIPass,
 		QuotaFile: filepath.Join(cfg.DataDir, "quota.json"),
-		LogLevel:  "info",
+		LogLevel:  gostLogLevel,
 	})
 	ctl.SampleSeconds = sampleSeconds
 	ctl.RetentionDays = retentionDays

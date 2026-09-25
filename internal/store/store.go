@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"io"
 
 	"time"
 
@@ -51,6 +52,14 @@ func Open(path string) (*Store, error) {
 
 // Close 关闭数据库。
 func (s *Store) Close() error { return s.db.Close() }
+
+// BackupTo 把数据库一致性快照写入 w（bbolt WriteTo，不阻塞正常读写）。
+func (s *Store) BackupTo(w io.Writer) error {
+	return s.db.View(func(tx *bolt.Tx) error {
+		_, err := tx.WriteTo(w)
+		return err
+	})
+}
 
 // ---------- 设置 ----------
 

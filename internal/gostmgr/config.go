@@ -3,6 +3,7 @@ package gostmgr
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -137,7 +138,10 @@ func BuildConfig(nodes []*model.Node, opts BuildOptions) *Config {
 		},
 		Log: &Log{Output: "stderr", Level: opts.LogLevel, Format: "text"},
 	}
-	if cfg.Log.Level == "" {
+	if cfg.Log.Level == "off" {
+		// 关闭日志：gost 输出直接丢弃，面板侧日志文件保持空白
+		cfg.Log = &Log{Output: os.DevNull, Level: "info", Format: "text"}
+	} else if cfg.Log.Level == "" {
 		cfg.Log.Level = "info"
 	}
 

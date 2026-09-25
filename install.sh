@@ -31,6 +31,20 @@ if [ -n "$BASE_PATH" ]; then
   NORM_BASE="${NORM_BASE%/}"
 fi
 GOPROXY="${GOPROXY:-https://goproxy.cn,direct}"
+# GitHub 加速域名（如 https://ghfast.top），留空则直连 GitHub
+GH_PROXY="${GH_PROXY:-https://ghfast.top}"
+# 给 GitHub 地址加上加速前缀
+gh_url() {
+  local u="$1"
+  if [ -n "$GH_PROXY" ]; then
+    case "$u" in
+      https://github.com/*|http://github.com/*) printf '%s/%s' "${GH_PROXY%/}" "$u" ;;
+      *) printf '%s' "$u" ;;
+    esac
+  else
+    printf '%s' "$u"
+  fi
+}
 GOST_REPO="${GOST_REPO:-https://github.com/go-gost/gost}"
 GOST_REF="${GOST_REF:-master}"
 GO_VERSION="${GO_VERSION:-1.26.8}"
@@ -178,6 +192,22 @@ open_firewall_port() {
     fi
   fi
 }
+# 撤销本机防火墙端口规则（卸载时调用；规则不存在时静默跳过）
+close_firewall_port() {
+  local port="$1"
+  [ -n "$port" ] || return 0
+  if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -qi '^Status: active'; then
+    ufw delete allow "${port}/tcp" >/dev/null 2>&1 && ok "已移除 ufw ${port}/tcp 规则" || true
+  fi
+  if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
+    firewall-cmd --permanent --remove-port="${port}/tcp" >/dev/null 2>&1 || true
+    firewall-cmd --reload >/dev/null 2>&1 && ok "已移除 firewalld ${port}/tcp 规则" || true
+  fi
+  if command -v iptables >/dev/null 2>&1; then
+    while iptables -D INPUT -p tcp --dport "$port" -j ACCEPT >/dev/null 2>&1; do :; done
+  fi
+}
+
 # 验证 gost 是否具备面板所需的 REST API（服务/配额热管理）
 verify_gost() {
   local bin="$1" tmpdir port pid
@@ -214,7 +244,7 @@ EOF
 build_gost() {
   local work; work="$(mktemp -d)"
   info "拉取 gost 源码…"
-  local repo="$GOST_REPO"
+  local repo; repo="$(gh_url "$GOST_REPO")"
   if ! git clone --depth 1 --branch "$GOST_REF" "$repo" "$work/gost" >/dev/null 2>&1; then
     # 分支可能不存在（如提交号），退化为默认分支
     if ! git clone --depth 1 "$repo" "$work/gost" >/dev/null 2>&1; then
@@ -255,8 +285,8 @@ install_gost() {
 try_release_gost() {
   local ver rurl tmp
   for ver in 3.3.1 3.3.0 3.2.6; do
-    rurl="https://github.com/go-gost/gost/releases/download/v${ver}/gost_${ver}_linux_${GOARCH}.tar.gz"
-    [ "$GOARCH" = "arm" ] && rurl="https://github.com/go-gost/gost/releases/download/v${ver}/gost_${ver}_linux_armv7.tar.gz"
+    rurl="$(gh_url "https://github.com/go-gost/gost/releases/download/v${ver}/gost_${ver}_linux_${GOARCH}.tar.gz")"
+    [ "$GOARCH" = "arm" ] && rurl="$(gh_url "https://github.com/go-gost/gost/releases/download/v${ver}/gost_${ver}_linux_armv7.tar.gz")"
     tmp="/tmp/gost_${ver}.tar.gz"
     info "尝试下载 gost v${ver} 预编译包…"
     if curl -fsSL --retry 2 --connect-timeout 15 -o "$tmp" "$rurl" 2>/dev/null; then
@@ -336,6 +366,7 @@ install_panel() {
       die "未找到本地源码，且仓库地址未配置。
     请使用环境变量指定仓库：sudo PANEL_REPO=https://github.com/you/gost-webui bash install.sh"
     fi
+    repo="$(gh_url "$repo")"
     info "拉取面板源码: $repo"
     if ! git clone --depth 1 "$repo" "$src" >/dev/null 2>&1; then
       github_hint
@@ -686,7 +717,19 @@ do_uninstall() {
     KEEP_DATA="$([ "${keep,,}" = "y" ] && echo 1 || echo 0)" bash "$PANEL_DIR/uninstall.sh" >/dev/null 2>&1 || true
   fi
   rm -rf "$PANEL_DIR" "$CONF_DIR"
-  [ "${keep,,}" = "y" ] || rm -rf "$DATA_DIR" "$LOG_DIR"
+  [ "${keep,,}" = "y" ] || { rm -rf "$DATA_DIR" "$LOG_DIR" "${HOME}/.gost" /root/.gost; rm -f /tmp/gost_install.log; }
+  # 撤销安装时放行的端口规则
+  pport=$(awk -F: '/^listen:/{gsub(/[ "]/,"",$2); print $2}' "$CONF" 2>/dev/null | tail -1)
+  if [ -n "$pport" ] && command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -qi '^Status: active'; then
+    ufw delete allow "${pport}/tcp" >/dev/null 2>&1 || true
+  fi
+  if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1 && [ -n "$pport" ]; then
+    firewall-cmd --permanent --remove-port="${pport}/tcp" >/dev/null 2>&1 || true
+    firewall-cmd --reload >/dev/null 2>&1 || true
+  fi
+  if command -v iptables >/dev/null 2>&1 && [ -n "$pport" ]; then
+    while iptables -D INPUT -p tcp --dport "$pport" -j ACCEPT >/dev/null 2>&1; do :; done
+  fi
   rm -f /usr/local/bin/go-ui
   ok "卸载完成，再见"
   exit 0
@@ -832,13 +875,21 @@ uninstall_all() {
     rm -f /etc/systemd/system/gost-webui.service
     systemctl daemon-reload || true
   fi
+  pkill -f "${PANEL_DIR}/bin/gost-webui" >/dev/null 2>&1 || true
   pkill -f "${PANEL_DIR}/bin/gost" >/dev/null 2>&1 || true
+  sleep 1
+  # go-ui 管理命令一并移除（旧版 --uninstall 漏删，属卸载不干净 BUG）
+  rm -f /usr/local/bin/go-ui
+  # 撤销安装时本机放行的端口规则（ufw / firewalld / iptables）
+  close_firewall_port "$PANEL_PORT" || true
   rm -rf "$PANEL_DIR"
   rm -rf "$CONF_DIR"
   if [ "${KEEP_DATA:-0}" != "1" ]; then
     rm -rf "$DATA_DIR" "$LOG_DIR"
+    rm -rf "$HOME/.gost" /root/.gost 2>/dev/null || true
+    rm -f /tmp/gost_install.log
   fi
-  ok "卸载完成（配置与数据已删除，KEEP_DATA=1 可保留数据）"
+  ok "卸载完成（程序、配置、go-ui 已删除；KEEP_DATA=1 可保留数据）"
 }
 
 # ---------- 主流程 ----------

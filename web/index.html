@@ -4,14 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Gost-WebUI</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="stylesheet" href="style.css">
-<link rel="stylesheet" href="theme.css">
 </head>
 <body>
 
 <!-- 登录 -->
 <div id="login" class="login-wrap hidden">
-  <div class="login-intro"><span class="eyebrow">山水有相逢 · 连接无远近</span><h2>云深不知处<br>自有天地宽</h2><p>一方清境，万里相连。</p></div>
+  <div class="login-intro"><span class="eyebrow">GOST RELAY CONSOLE</span><h2>流量中枢<br>尽在掌握</h2><p>转发管理 · 流量管控 · 告警通知。</p></div>
   <div class="login-card">
     <div class="eyebrow">GOST · TUNNEL MANAGER</div>
     <h1>Gost面板</h1>
@@ -34,7 +34,7 @@
   <aside class="sidebar" id="sidebar">
     <div class="brand">
       <div>
-        <div class="name">Gost-WebUI</div>
+        <div class="name"><svg width="30" height="30" viewBox="0 0 32 32" fill="none" aria-hidden="true"><path d="M5 7 10.5 25 16 12.5 21.5 25 27 7" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
         <div class="sub">Gost面板 <span id="brandSub"></span></div>
       </div>
     </div>
@@ -45,7 +45,6 @@
       <a href="#system" data-view="system"><span data-icon="settings"></span>系统设置</a>
     </nav>
       <div class="actions">
-        <span class="chip" id="hostChip">—</span>
         <a class="btn ghost sm" href="https://github.com/baiduxc/Gost-webui" target="_blank" rel="noopener noreferrer" title="GitHub 仓库" aria-label="GitHub 仓库" style="text-decoration:none"><svg class="icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12z"/></svg></a>
         <button class="btn ghost sm" id="themeBtn" title="切换主题"><span data-icon="moon"></span></button>
         <button class="btn ghost sm" id="refreshBtn" title="刷新"><span data-icon="refresh"></span></button>
@@ -56,7 +55,7 @@
 
   <main>
     <div class="topbar">
-      <div class="hero-copy"><div class="eyebrow">GOST / RELAY CONSOLE</div><h1 id="viewTitle">网络概览</h1><p id="viewSubtitle">观流量起落，守每一程连接。</p><span class="hero-note">云深不知处，自有天地宽</span></div>
+      <div class="hero-copy"><div class="eyebrow">GOST / RELAY CONSOLE</div><h1 id="viewTitle">网络概览</h1><p id="viewSubtitle">流量与节点状态总览</p><span class="hero-note"></span></div>
 
     </div>
 
@@ -78,7 +77,7 @@
           <canvas id="chart" class="chart-box" height="160" role="img" aria-label="近30天上行和下行流量趋势"></canvas>
           <div class="chart-legend">
             <span><i class="swatch" style="background:var(--color-accent)"></i>上行</span>
-            <span><i class="swatch" style="background:var(--color-text-tertiary)"></i>下行</span>
+            <span><i class="swatch" style="background:var(--color-gold)"></i>下行</span>
           </div>
         </div>
 
@@ -226,7 +225,18 @@
               <label for="setRetention">明细保留（天）</label>
               <input id="setRetention" type="number" min="1" max="3650">
             </div>
+            <div class="field">
+              <label for="setLogLevel">gost 日志</label>
+              <select id="setLogLevel">
+                <option value="off">关闭（日常推荐，不写任何日志）</option>
+                <option value="info">开启-info（调试用，记录连接与目标域名）</option>
+                <option value="warn">开启-warn（仅告警）</option>
+                <option value="error">开启-error（仅错误）</option>
+                <option value="debug">开启-debug（最详细，量大）</option>
+              </select>
+            </div>
           </div>
+          <div class="hint" style="margin-bottom:8px">日常选「关闭」不留任何访问记录；需要排障时再切到 info，保存后自动重启 gost 生效。</div>
           <button class="btn secondary sm" id="saveStatsBtn">保存统计设置</button>
         </div>
 
@@ -296,6 +306,13 @@
 
         <div class="card">
           <div class="card-head">
+            <div><h2>数据备份</h2><div class="desc">导出面板数据库（节点、设置、流量统计），升级或迁移前建议先备份</div></div>
+            <button class="btn secondary sm" id="backupBtn">下载备份</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
             <div><h2>账号安全</h2><div class="desc">修改面板登录密码</div></div>
             <button class="btn sm" id="savePwBtn">修改密码</button>
           </div>
@@ -311,10 +328,10 @@
         </div>
       </section>
     </div>
-    <footer class="app-footer"><span>山水有相逢 · 连接无远近</span>    <div class="footer-status">
+    <footer class="app-footer"><span id="footerVersion">Gost-WebUI</span>    <div class="footer-status">
       <span class="status-dot" id="gostDot"></span>
       <span id="gostText">gost 状态检测中</span>
-    </div><span>Gost-WebUI <i>Gost面板</i></span></footer>
+    </div><span>by <a href="https://github.com/baiduxc/Gost-webui" target="_blank" rel="noopener noreferrer"><i>599</i></a></span></footer>
   </main>
 </div>
 

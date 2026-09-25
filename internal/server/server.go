@@ -100,6 +100,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/settings", s.auth(s.handleGetSettings))
 	s.mux.HandleFunc("PUT /api/settings", s.auth(s.handleUpdateSettings))
 	s.mux.HandleFunc("POST /api/password", s.auth(s.handleChangePassword))
+	s.mux.HandleFunc("GET /api/backup", s.auth(s.handleBackup))
 
 	s.mux.HandleFunc("GET /api/system", s.auth(s.handleSystemInfo))
 	s.mux.HandleFunc("PUT /api/system", s.auth(s.handleSystemUpdate))
@@ -355,6 +356,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Path:     s.cookiePath(),
 		Expires:  exp,
 		HttpOnly: true,
+		Secure:   requestIsTLS(r),
 		SameSite: http.SameSiteStrictMode,
 	})
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "username": req.Username})
@@ -365,6 +367,17 @@ func (s *Server) cookiePath() string {
 		return "/"
 	}
 	return s.basePath + "/"
+}
+
+// requestIsTLS 判断当前请求是否走 HTTPS（直连 TLS 或反代声明 https）。
+func requestIsTLS(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	if v := r.Header.Get("X-Forwarded-Proto"); v != "" {
+		return strings.EqualFold(strings.TrimSpace(strings.Split(v, ",")[0]), "https")
+	}
+	return false
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {

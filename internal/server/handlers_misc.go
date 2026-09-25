@@ -2,6 +2,7 @@ package server
 
 import (
 	"bufio"
+	"fmt"
 	"net/http"
 	"os"
 	"sort"
@@ -11,6 +12,7 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
+	"gost-webui/internal/config"
 	"gost-webui/internal/store"
 	"gost-webui/internal/system"
 )
@@ -127,9 +129,9 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request) {
 			"currentConns": curConns,
 			"totalConns":   totalConns,
 		},
-		"today": map[string]uint64{"in": todayIn, "out": todayOut},
-		"month": map[string]uint64{"in": monthIn, "out": monthOut},
-		"total": map[string]uint64{"in": totalIn, "out": totalOut},
+		"today":  map[string]uint64{"in": todayIn, "out": todayOut},
+		"month":  map[string]uint64{"in": monthIn, "out": monthOut},
+		"total":  map[string]uint64{"in": totalIn, "out": totalOut},
 		"series": series,
 		"top":    stats,
 	})
@@ -148,11 +150,18 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 			retention = n
 		}
 	}
+	gostLogLvl := s.cfg.Gost.LogLevel
+	if v, ok := s.ctl.Store.GetSetting("gost_log_level"); ok {
+		if n := config.NormalizeGostLogLevel(v); n != "" {
+			gostLogLvl = n
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"publicHost":    s.publicHost(),
 		"configured":    s.configuredHost(),
 		"sampleSeconds": sample,
 		"retentionDays": retention,
+		"gostLogLevel":  gostLogLvl,
 		"username":      s.adminUser(),
 		"gost": map[string]any{
 			"bin":        s.cfg.Gost.Bin,
@@ -176,6 +185,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		PublicHost    *string `json:"publicHost"`
 		SampleSeconds *int    `json:"sampleSeconds"`
 		RetentionDays *int    `json:"retentionDays"`
+		GostLogLevel  *string `json:"gostLogLevel"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, "请求格式错误")
@@ -200,7 +210,46 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		_ = s.ctl.Store.SetSetting("retention_days", strconv.Itoa(*req.RetentionDays))
 		s.ctl.RetentionDays = *req.RetentionDays
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	needGostRestart := false
+	if req.GostLogLevel != nil {
+		lvl := config.NormalizeGostLogLevel(*req.GostLogLevel)
+		if lvl == "" {
+			writeErr(w, http.StatusBadRequest, "日志级别不正确（off/trace/debug/info/warn/error）")
+			return
+		}
+		if lvl != s.ctl.Opts.LogLevel {
+			if err := s.ctl.Store.SetSetting("gost_log_level", lvl); err != nil {
+				writeErr(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			s.ctl.Opts.LogLevel = lvl
+			// 重写 gost 配置文件；级别变更需重启 gost 进程后生效
+			if err := s.ctl.SyncConfigFile(); err == nil {
+				needGostRestart = true
+				if lvl == "off" {
+					// 关闭日志时抹掉历史留痕
+					s.ctl.Gost.ClearLog()
+				}
+			}
+		}
+	}
+	out := map[string]any{"ok": true}
+	if needGostRestart {
+		out["needGostRestart"] = true
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// handleBackup 导出面板数据库一致性快照（bbolt 单文件，含节点、设置、统计）。
+// 下载文件名带时间戳；恢复时停止面板后用同文件覆盖 data_dir/panel.db 即可。
+func (s *Server) handleBackup(w http.ResponseWriter, r *http.Request) {
+	name := fmt.Sprintf("panel-backup-%s.db", time.Now().Format("20060102-150405"))
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", "attachment; filename="+name)
+	if err := s.ctl.Store.BackupTo(w); err != nil {
+		// 头已发出，只能记日志
+		s.log.Error("导出备份失败", "err", err)
+	}
 }
 
 func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {

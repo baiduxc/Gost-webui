@@ -135,16 +135,28 @@ function fmtDuration(sec) {
 }
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-/* ---------------- 主题 ---------------- */
+/* ---------------- 主题（亮/暗双模） ---------------- */
+function refreshThemeBtn() {
+  const t = document.documentElement.dataset.theme;
+  $('#themeBtn').innerHTML = icon(t === 'dark' ? 'sun' : 'moon');
+  $('#themeBtn').setAttribute('aria-label', t === 'dark' ? '切换到浅色' : '切换到深色');
+  $('#themeBtn').title = $('#themeBtn').getAttribute('aria-label');
+}
 function applyTheme(t) {
   document.documentElement.dataset.theme = t;
   localStorage.setItem('gp_theme', t);
-  $('#themeBtn').innerHTML = icon(t === 'dark' ? 'sun' : 'moon');
-  $('#themeBtn').setAttribute('aria-label', t === 'dark' ? '切换浅色主题' : '切换深色主题');
+  refreshThemeBtn();
   if (state.overview && state.view === 'overview') renderOverview();
 }
+function cycleTheme() {
+  applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
+}
 function initTheme() {
-  applyTheme(localStorage.getItem('gp_theme') || 'dark');
+  const q = new URLSearchParams(location.search);
+  const themeParam = q.get('theme');
+  document.documentElement.dataset.theme = (themeParam === 'light' || themeParam === 'dark')
+    ? themeParam : (localStorage.getItem('gp_theme') || 'light');
+  refreshThemeBtn();
 }
 
 /* ---------------- 登录 ---------------- */
@@ -167,7 +179,14 @@ function showApp() {
   $('#app').classList.remove('hidden');
   renderIcons();
   refreshAll();
-  if (!state.timer) state.timer = setInterval(refreshAll, 20000);
+  if (!state.timer) state.timer = setInterval(refreshAll, 5000);
+  if (!state.versionLoaded) {
+    state.versionLoaded = true;
+    api('api/system').then(sys => {
+      const v = (sys.panel && sys.panel.version) || '';
+      const fv = $('#footerVersion'); if (fv && v) fv.textContent = 'Gost-WebUI v' + String(v).replace(/^v/, '');
+    }).catch(() => {});
+  }
 }
 
 $('#loginBtn').onclick = async () => {
@@ -189,7 +208,7 @@ $('#logoutBtn').onclick = async () => {
   showLogin();
 };
 $('#refreshBtn').onclick = () => refreshAll(true);
-$('#themeBtn').onclick = () => applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
+$('#themeBtn').onclick = cycleTheme;
 
 /* ---------------- 视图 ---------------- */
 $('#nav').addEventListener('click', e => {
@@ -198,7 +217,7 @@ $('#nav').addEventListener('click', e => {
 });
 
 const VIEW_TITLE = { overview: '网络概览', nodes: '节点管理', notify: '通知提醒', system: '系统设置' };
-const VIEW_SUBTITLE = { overview: '观流量起落，守每一程连接。', nodes: '连接有序，流转自如。', notify: '重要的消息，自会如期而至。', system: '静心调校，让连接安稳如常。' };
+const VIEW_SUBTITLE = { overview: '流量与节点状态总览', nodes: '节点转发与配额管理', notify: '通知与告警设置', system: '面板与 gost 运行参数' };
 function setView(view) {
   state.view = view;
   $$('#nav a').forEach(a => a.classList.toggle('active', a.dataset.view === view));
@@ -238,7 +257,7 @@ function renderStatusBar() {
   const ok = g.running && g.reachable !== false;
   $('#gostDot').className = 'status-dot ' + (ok ? 'ok' : 'bad');
   $('#gostText').textContent = ok ? `gost 运行中 · PID ${g.pid || '—'}` : (g.running ? 'gost 异常' : 'gost 未运行');
-  $('#hostChip').textContent = state.publicHost || '未检测到地址';
+  const hc = $('#hostChip'); if (hc) hc.textContent = state.publicHost || '未检测到地址';
   $('#brandSub').textContent = `/ ${state.nodes.length} 节点`;
 }
 
@@ -281,7 +300,7 @@ function renderOverview() {
         const pct = Math.max(0, Math.round(sum / max * 100));
         return `<tr>
           <td>${esc(x.name)}</td>
-          <td>${statusTag(x.enabled, x.blocked)}</td>
+          <td>${x.enabled ? (x.blocked ? '<span class="status-inline"><span class="status-dot bad"></span>超限暂停</span>' : '<span class="status-inline"><span class="status-dot ok"></span>运行中</span>') : '<span class="status-inline"><span class="status-dot"></span>已停用</span>'}</td>
           <td><div class="meter"><i style="width:${pct}%"></i></div></td>
           <td class="right mono">${fmtBytes(sum)}</td></tr>`;
       }).join('')}</tbody></table></div>`;
@@ -313,9 +332,15 @@ function renderHostCards(met) {
 }
 
 function statusTag(enabled, blocked) {
-  if (!enabled) return '<span class="status-inline"><span class="status-dot"></span>已停用</span>';
-  if (blocked) return '<span class="status-inline"><span class="status-dot bad"></span>超限暂停</span>';
-  return '<span class="status-inline"><span class="status-dot ok"></span>运行中</span>';
+  // 常态不显示文字（开关本身即状态）；仅超限暂停时提示
+  if (enabled && blocked) return '<span class="status-inline"><span class="status-dot bad"></span>超限暂停</span>';
+  return '';
+}
+/* 节点表专用：开关 + 异常徽标 */
+function nodeStatusCell(n) {
+  const blocked = n.live && n.live.quotaBlocked;
+  const badge = (n.enabled && blocked) ? '<span class="status-inline"><span class="status-dot bad"></span>超限暂停</span>' : '';
+  return `<button class="node-toggle" data-act="toggle" data-id="${esc(n.id)}" role="switch" aria-checked="${!!n.enabled}" aria-label="${n.enabled ? '停用' : '启用'}${esc(n.name)}"><span class="toggle-track"></span></button>${badge}`;
 }
 
 /* 流量图表：翡翠上行、淡金下行 */
@@ -357,10 +382,12 @@ function drawChart(canvas, points) {
     const y = padT + ch * i / 4;
     ctx.strokeStyle = cBorderLight;
     ctx.lineWidth = 1;
+    ctx.setLineDash([3, 5]);
     ctx.beginPath();
     ctx.moveTo(padL, y + 0.5);
     ctx.lineTo(w - padR, y + 0.5);
     ctx.stroke();
+    ctx.setLineDash([]);
     ctx.fillStyle = cTertiary;
     ctx.fillText(fmtBytes(niceMax * (4 - i) / 4), padL - 10, y + 4);
   }
@@ -369,23 +396,41 @@ function drawChart(canvas, points) {
   const px = i => padL + stepX * i;
   const py = v => padT + ch * (1 - (v || 0) / niceMax);
 
-  const series = (key, color) => {
-    ctx.beginPath();
-    points.forEach((p, i) => { i ? ctx.lineTo(px(i), py(p[key])) : ctx.moveTo(px(i), py(p[key])); });
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
-    // 实心浅色填充（无渐变）
-    ctx.lineTo(px(points.length - 1), padT + ch);
-    ctx.lineTo(padL, padT + ch);
-    ctx.closePath();
-    ctx.globalAlpha = 0.08;
-    ctx.fillStyle = color;
-    ctx.fill();
-    ctx.globalAlpha = 1;
+  const smooth = pts => {
+    // Catmull-Rom 转贝塞尔，曲线顺滑
+    ctx.moveTo(pts[0][0], pts[0][1]);
+    for (let i = 0; i < pts.length - 1; i++) {
+      const p0 = pts[Math.max(0, i - 1)], p1 = pts[i], p2 = pts[i + 1], p3 = pts[Math.min(pts.length - 1, i + 2)];
+      ctx.bezierCurveTo(
+        p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6,
+        p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6,
+        p2[0], p2[1]);
+    }
   };
-  series('in', cAccent);
-  series('out', cGold);
+  const series = (key, color, alphaTop) => {
+    const pts = points.map((p, i) => [px(i), py(p[key])]);
+    // 渐变填充（上线性渐隐）
+    const grad = ctx.createLinearGradient(0, padT, 0, padT + ch);
+    grad.addColorStop(0, color + alphaTop);
+    grad.addColorStop(1, color + '00');
+    ctx.beginPath(); smooth(pts);
+    ctx.lineTo(px(points.length - 1), padT + ch); ctx.lineTo(padL, padT + ch); ctx.closePath();
+    ctx.fillStyle = grad; ctx.fill();
+    // 描边
+    ctx.beginPath(); smooth(pts);
+    ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    ctx.shadowColor = color + '55'; ctx.shadowBlur = 6; ctx.shadowOffsetY = 2;
+    ctx.stroke();
+    ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
+    // 末端光点
+    const last = pts[pts.length - 1];
+    ctx.beginPath(); ctx.arc(last[0], last[1], 3, 0, Math.PI * 2);
+    ctx.fillStyle = color; ctx.fill();
+    ctx.beginPath(); ctx.arc(last[0], last[1], 6, 0, Math.PI * 2);
+    ctx.fillStyle = color + '30'; ctx.fill();
+  };
+  series('in', cAccent, '33');
+  series('out', cGold, '26');
 
   ctx.textAlign = 'center';
   ctx.fillStyle = cTertiary;
@@ -407,12 +452,13 @@ function niceCeil(v) {
 
 /* ---------------- 节点列表 ---------------- */
 function renderNodes() {
+  closeAllDropdowns();
   const wrap = $('#nodeTable');
   const nodes = state.nodes;
   const active = nodes.filter(n => n.enabled && !(n.live && n.live.quotaBlocked)).length;
   $('#nodesSummary').textContent = `${nodes.length} 个节点 · ${active} 个已启用 · 本月 ${fmtBytes(nodes.reduce((sum, n) => sum + (n.monthIn || 0) + (n.monthOut || 0), 0))}`;
   if (!nodes.length) {
-    wrap.innerHTML = '<div class="empty"><span class="empty-title">此间尚无连接</span><p>添加第一个节点，开启你的中转之旅。</p><button class="btn secondary" data-act="add">添加节点</button></div>';
+    wrap.innerHTML = '<div class="empty"><span class="empty-title">暂无节点</span><p>添加第一个节点，开始中转。</p><button class="btn secondary" data-act="add">添加节点</button></div>';
     return;
   }
   wrap.innerHTML = `<table>
@@ -421,7 +467,7 @@ function renderNodes() {
       <td><button class="node-select" data-act="detail" data-id="${esc(n.id)}" aria-label="查看${esc(n.name)}详情">${icon('server')}<span><b>${esc(n.name)}</b><small>${esc(n.protocol || 'TCP')}${n.mode === 'gost' ? ' · GOST' : ''}${n.udp ? ' · TCP+UDP' : ''} / ${n.mode === 'gost' && n.gostLocal ? '本机落地' : `${esc(n.targetHost)}:${n.targetPort}`}</small></span></button></td>
       <td class="mono">${n.listenPort}</td>
       <td class="node-quota"><span class="mono">${fmtBytes((n.monthIn || 0) + (n.monthOut || 0))}</span>${quotaCell(n)}</td>
-      <td><button class="node-toggle" data-act="toggle" data-id="${esc(n.id)}" role="switch" aria-checked="${!!n.enabled}" aria-label="${n.enabled ? '停用' : '启用'}${esc(n.name)}"><span class="toggle-track"></span></button>${statusTag(n.enabled, n.live && n.live.quotaBlocked)}</td>
+      <td class="node-status-cell">${nodeStatusCell(n)}</td>
       <td class="ops right"><div class="dropdown">
         <button class="btn ghost sm dropdown-toggle" data-act="menu" data-id="${esc(n.id)}" aria-label="${esc(n.name)}的操作" aria-expanded="false">操作${icon('chevron', 'sm')}</button>
         <div class="dropdown-menu">
@@ -447,7 +493,7 @@ function quotaCell(n) {
     <div class="meter"><i class="${cls}" style="width:${Math.max(0, pct)}%"></i></div>`;
 }
 
-$('#nodeTable').addEventListener('click', async e => {
+async function nodeTableClick(e) {
   const btn = e.target.closest('button[data-act]');
   if (!btn) return;
   const id = btn.dataset.id;
@@ -461,17 +507,25 @@ $('#nodeTable').addEventListener('click', async e => {
     if (!wasOpen) {
       dd.classList.add('open');
       btn.setAttribute('aria-expanded', 'true');
-      const menu = dd.querySelector('.dropdown-menu');
+      const menu = dd.querySelector('.dropdown-menu') || menuHome.get(dd);
+      // 祖先 backdrop-filter 会劫持 fixed 坐标系 → 临时挂到 body
+      if (menu && menu.parentElement !== document.body) {
+        menuHome.set(dd, menu);
+        document.body.appendChild(menu);
+      }
       const rect = btn.getBoundingClientRect();
-      const mw = menu.offsetWidth || 132;
-      const mh = menu.offsetHeight || 0;
+      menu.style.display = 'flex';
+      menu.style.left = '0px'; menu.style.top = '0px';
+      const mr = menu.getBoundingClientRect();
+      const mw = mr.width || 176;
+      const mh = mr.height || 0;
       let left = rect.right - mw;
       if (left < 8) left = 8;
       if (left + mw > window.innerWidth - 8) left = window.innerWidth - mw - 8;
-      let top = rect.bottom + 4;
-      if (top + mh > window.innerHeight - 8) top = Math.max(8, rect.top - mh - 4);
-      menu.style.left = left + 'px';
-      menu.style.top = top + 'px';
+      let top = rect.bottom + 6;
+      if (top + mh > window.innerHeight - 8) top = Math.max(8, rect.top - mh - 6);
+      menu.style.left = Math.round(left) + 'px';
+      menu.style.top = Math.round(top) + 'px';
     }
     return;
   }
@@ -504,12 +558,22 @@ $('#nodeTable').addEventListener('click', async e => {
       } catch (err) { toast(err.message, 'err'); }
       break;
   }
-});
+}
+$('#nodeTable').addEventListener('click', nodeTableClick);
+document.body.addEventListener('click', e => { if (e.target.closest('body > .dropdown-menu')) nodeTableClick(e); });
 $('#addNodeBtn').onclick = () => openNodeForm(null);
 
 // 点击表格以外区域时关闭所有下拉菜单
+const menuHome = new WeakMap();   // dd -> 其原始菜单节点
 function closeAllDropdowns() {
-  $$('.dropdown.open').forEach(d => { d.classList.remove('open'); d.querySelector('.dropdown-toggle')?.setAttribute('aria-expanded', 'false'); });
+  $$('.dropdown.open').forEach(d => {
+    d.classList.remove('open');
+    d.querySelector('.dropdown-toggle')?.setAttribute('aria-expanded', 'false');
+  });
+  // 归还所有被提到 body 的菜单，避免节点堆积
+  document.body.querySelectorAll(':scope > .dropdown-menu').forEach(m => {
+    m.remove();
+  });
 }
 document.addEventListener('click', closeAllDropdowns);
 // 滚动/缩放时菜单（fixed 定位）会脱离按钮，直接关闭
@@ -613,7 +677,6 @@ function openNodeForm(node) {
       <label>落地机 v2rayN 链接</label>
       <textarea id="f-link" placeholder="粘贴 vmess:// / vless:// / trojan:// / ss:// / hysteria2:// / tuic:// 链接">${esc(!isGost && node ? node.landingLink : '')}</textarea>
       <div class="hint">粘贴落地机节点的分享链接，面板自动解析协议、地址与鉴权参数</div>
-      <div class="hint">纯透传模式：面板只把落地机链接的地址端口换成中转机，其余参数（UUID/SNI/Reality 公钥/flow 等）原样保留，加密握手端到端直达落地机。</div>
       <div class="btn-group" style="margin-top:12px">
         <button class="btn secondary sm" id="testBtn">测试落地机连通性</button>
         <span class="hint" id="testResult" style="margin:0"></span>
@@ -732,9 +795,9 @@ function openNodeForm(node) {
           </select>
         </div>
         <div class="field"><label>额度</label>
-          <div class="row tight">
+          <div class="row tight quota-row">
             <input id="f-quotaSize" type="number" min="0" step="0.1" value="${q.bytes ? (q.bytes / Math.pow(1024, 3)).toFixed(2) : ''}" placeholder="如 100">
-            <select id="f-quotaUnit" style="flex:0 0 92px">
+            <select id="f-quotaUnit" style="flex:0 0 74px">
               <option value="1024">GB</option>
               <option value="1048576">TB</option>
               <option value="1">MB</option>
@@ -1287,6 +1350,7 @@ function renderSystem() {
   $('#setHost').placeholder = '自动探测（当前 ' + (sys.publicHost || '未知') + '）';
   if (document.activeElement !== $('#setSample')) $('#setSample').value = st.sampleSeconds;
   if (document.activeElement !== $('#setRetention')) $('#setRetention').value = st.retentionDays;
+  if (document.activeElement !== $('#setLogLevel') && st.gostLogLevel) $('#setLogLevel').value = st.gostLogLevel;
 
   const g = sys.gost || {};
   const proc = g.process || {};
@@ -1297,6 +1361,7 @@ function renderSystem() {
     <div class="k">最近退出</div><div class="v mono">${esc(proc.lastExit || '—')}</div>`;
   $('#gostPaths').textContent = `${g.bin || ''} · ${g.configFile || ''} · ${g.logFile || ''}`;
 
+  const fv = $('#footerVersion'); if (fv) fv.textContent = 'Gost-WebUI' + (p.version ? ' v' + String(p.version).replace(/^v/, '') : '');
   $('#aboutInfo').innerHTML = `
     <div class="k">版本</div><div class="v mono">gost-webui ${esc(p.version || '')} (${esc(p.runtimeOS || '')}/${esc(p.runtimeArch || '')})</div>
     <div class="k">主机运行</div><div class="v">${fmtDuration(met.hostUptime)}</div>
@@ -1387,11 +1452,17 @@ $('#saveHostBtn').onclick = async () => {
 
 $('#saveStatsBtn').onclick = async () => {
   try {
-    await api('api/settings', {
+    const r = await api('api/settings', {
       method: 'PUT',
-      body: { sampleSeconds: parseInt($('#setSample').value, 10), retentionDays: parseInt($('#setRetention').value, 10) },
+      body: { sampleSeconds: parseInt($('#setSample').value, 10), retentionDays: parseInt($('#setRetention').value, 10), gostLogLevel: $('#setLogLevel').value },
     });
-    toast('已保存（采样间隔重启后生效）');
+    if (r.needGostRestart) {
+      toast('已保存，正在重启 gost 生效…');
+      try { await api('api/gost/restart', { method: 'POST' }); toast('gost 已重启'); }
+      catch (e) { toast('设置已保存，但 gost 重启失败：' + e.message, 'err'); }
+    } else {
+      toast('已保存（采样间隔重启后生效）');
+    }
     state.system = null;
     await loadSystem();
   } catch (e) { toast(e.message, 'err'); }
@@ -1475,6 +1546,25 @@ $('#gostRestartBtn').onclick = async () => {
     state.system = null;
     await refreshAll();
     await loadSystem();
+  } catch (e) { toast(e.message, 'err'); }
+  finally { btn.disabled = false; }
+};
+
+$('#backupBtn').onclick = async () => {
+  const btn = $('#backupBtn');
+  btn.disabled = true;
+  try {
+    const res = await fetch(BASE + 'api/backup', { credentials: 'same-origin' });
+    if (!res.ok) throw new Error('备份失败：HTTP ' + res.status);
+    const blob = await res.blob();
+    const cd = res.headers.get('Content-Disposition') || '';
+    const m = cd.match(/filename=([\w.\-]+)/);
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = m ? m[1] : 'panel-backup.db';
+    a.click();
+    URL.revokeObjectURL(a.href);
+    toast('备份已下载');
   } catch (e) { toast(e.message, 'err'); }
   finally { btn.disabled = false; }
 };

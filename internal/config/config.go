@@ -25,6 +25,9 @@ type Gost struct {
 	APIPass string `yaml:"api_password"`
 	// LogFile 是 gost 进程输出日志文件。
 	LogFile string `yaml:"log_file"`
+	// LogLevel 是 gost 进程日志级别：trace/debug/info/warn/error。
+	// info 会记录每条连接的来源 IP 与目标域名；在意隐私留痕时建议设为 warn。
+	LogLevel string `yaml:"log_level"`
 }
 
 // Admin 面板管理员账号（初始密码，首次启动后写入数据库）。
@@ -35,11 +38,11 @@ type Admin struct {
 
 // Notify 通知（Telegram）默认配置；运行期以数据库设置为准。
 type Notify struct {
-	Enabled   bool   `yaml:"enabled"`
-	Token     string `yaml:"token"`
-	ChatID    string `yaml:"chat_id"`
-	APIBase   string `yaml:"api_base"`
-	Cooldown  int    `yaml:"cooldown_seconds"`
+	Enabled  bool   `yaml:"enabled"`
+	Token    string `yaml:"token"`
+	ChatID   string `yaml:"chat_id"`
+	APIBase  string `yaml:"api_base"`
+	Cooldown int    `yaml:"cooldown_seconds"`
 }
 
 // Config 面板配置。
@@ -84,6 +87,7 @@ func Default() *Config {
 			APIUser:    "gost",
 			APIPass:    RandomHex(16),
 			LogFile:    "/var/log/gost-webui/gost.log",
+			LogLevel:   "info",
 		},
 	}
 }
@@ -157,6 +161,9 @@ func applyDefaults(c *Config) {
 	if c.Gost.LogFile == "" {
 		c.Gost.LogFile = d.Gost.LogFile
 	}
+	if !ValidGostLogLevel(c.Gost.LogLevel) {
+		c.Gost.LogLevel = d.Gost.LogLevel
+	}
 	if c.Notify.APIBase == "" {
 		c.Notify.APIBase = d.Notify.APIBase
 	}
@@ -188,6 +195,28 @@ func (c *Config) EnsureDirs() error {
 		}
 	}
 	return nil
+}
+
+// ValidGostLogLevel 判断 gost 日志级别是否合法（不区分大小写）。
+// "off" 表示关闭日志（gost 输出丢弃，不写文件）。
+func ValidGostLogLevel(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "off", "trace", "debug", "info", "warn", "warning", "error":
+		return true
+	}
+	return false
+}
+
+// NormalizeGostLogLevel 规范化 gost 日志级别；非法值返回 ""。
+func NormalizeGostLogLevel(v string) string {
+	v = strings.ToLower(strings.TrimSpace(v))
+	if v == "warning" {
+		v = "warn"
+	}
+	if !ValidGostLogLevel(v) {
+		return ""
+	}
+	return v
 }
 
 // RandomHex 生成 n 字节随机数的十六进制字符串。
