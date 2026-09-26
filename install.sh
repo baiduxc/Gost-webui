@@ -451,15 +451,22 @@ parse_args() {
   fi
 }
 
-# 交互式询问初始配置（curl | bash 等非交互场景自动跳过）
+# 交互式询问初始配置（stdin 被管道占用时改从 /dev/tty 读取，真无终端才跳过）
 interactive_config() {
-  [ -t 0 ] || return 0
   [ -f "$CONF_DIR/panel.yml" ] && return 0
+  local TTY_IN=""
+  if [ -t 0 ]; then
+    TTY_IN="/dev/stdin"
+  elif [ -e /dev/tty ] && (exec < /dev/tty) 2>/dev/null; then
+    TTY_IN="/dev/tty"
+  else
+    return 0
+  fi
   echo
   echo "---------- 面板初始配置（直接回车使用默认值）----------"
   local v
   if [ -z "$GH_PROXY" ]; then
-    read -rp "是否使用 GitHub 加速节点下载？输入代理域名（如 https://ghfast.top），留空直连 GitHub: " v || true
+    read -rp "是否使用 GitHub 加速节点下载？输入代理域名（如 https://ghfast.top），留空直连 GitHub: " v < "$TTY_IN" || true
     v="${v%/}"
     if [ -n "$v" ]; then
       case "$v" in https://*|http://*) GH_PROXY="$v" ;; *) GH_PROXY="https://$v" ;; esac
@@ -470,17 +477,17 @@ interactive_config() {
       echo "  直连 GitHub 下载"
     fi
   fi
-  read -rp "面板端口 [${PANEL_PORT}]: " v || true
+  read -rp "面板端口 [${PANEL_PORT}]: " v < "$TTY_IN" || true
   if [ -n "$v" ]; then PANEL_PORT="$v"; fi
-  read -rp "访问路径（如 /panel，留空为根路径）[${NORM_BASE:-/}]: " v || true
+  read -rp "访问路径（如 /panel，留空为根路径）[${NORM_BASE:-/}]: " v < "$TTY_IN" || true
   if [ -n "$v" ]; then
     BASE_PATH="$v"
     NORM_BASE="/${BASE_PATH#/}"
     NORM_BASE="${NORM_BASE%/}"
   fi
-  read -rp "管理员用户名 [${PANEL_USER_IN:-admin}]: " v || true
+  read -rp "管理员用户名 [${PANEL_USER_IN:-admin}]: " v < "$TTY_IN" || true
   if [ -n "$v" ]; then PANEL_USER_IN="$v"; fi
-  read -rsp "管理员密码（留空随机生成）: " v || true
+  read -rsp "管理员密码（留空随机生成）: " v < "$TTY_IN" || true
   echo
   if [ -n "$v" ]; then PANEL_PASS_IN="$v"; fi
   echo "------------------------------------------------------"
