@@ -225,7 +225,12 @@ select::-ms-expand { display: none; }
   width: 100%; max-width: none; margin: 0;
   /* 全宽磨砂条：背景铺满视口，内容仍按页宽居中（左右 padding 把内容夹回 --page-max-width 列） */
   padding: 14px max(20px, calc((100% - var(--page-max-width)) / 2 + 20px)) 10px;
-  /* 与页面同色但半透明：静止时看不出差异，滚动时内容在条下穿过即呈现磨砂 */
+  /* 未滚动：完全透明；滚动后（body.scrolled）：与页面同色半透明 + 磨砂 */
+  background: transparent;
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+  transition: background .22s ease;
+}
+body.scrolled .sidebar {
   background: color-mix(in srgb, var(--color-bg) 78%, transparent);
   backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
 }
@@ -541,6 +546,20 @@ body > .dropdown-menu { display: flex; margin: 0; }
 .dropdown-menu button.danger { color: var(--color-error); }
 .dropdown-menu button .icon { width: 14px; height: 14px; flex: 0 0 auto; }
 
+/* 自定义确认弹窗 */
+.confirm-box { max-width: 400px; padding: 20px; }
+.confirm-box h2 { margin: 0 0 10px; font-size: 1rem; }
+.confirm-box .confirm-msg { margin: 0 0 18px; color: var(--color-text-secondary); font-size: .875rem; line-height: 1.6; }
+.confirm-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.btn.danger { background: var(--color-error); color: #fff; }
+.btn.danger:hover { filter: brightness(1.08); }
+
+/* 右上角用户菜单按钮 */
+#userBtn { display: inline-flex; align-items: center; gap: 6px; max-width: 180px; }
+#userBtnName { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#userBtn .icon:last-child { width: 12px; height: 12px; opacity: .6; }
+#userDropdown .dropdown-menu { min-width: 150px; }
+
 /* toast：底部居中黑胶囊 */
 .toast {
   position: fixed; left: 50%; bottom: 34px; transform: translateX(-50%); z-index: 200;
@@ -615,6 +634,7 @@ body > .dropdown-menu { display: flex; margin: 0; }
   .nav { order: 2; width: 100%; flex: 1 1 100%; }
   .nav a { flex: 1; padding: 8px 0; min-width: 0; }
   .sidebar .chip { display: none; }
+  #userBtnName, #userBtn .icon:last-child { display: none; }
   .topbar { padding: 16px 14px 0; }
   .content { padding: 18px 14px 40px; }
   .grid.cols-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }

@@ -1,6 +1,16 @@
 #!/bin/sh
-# Gost-webui 容器入口：首次启动生成配置并设置管理员账号
+# Gost-webui 容器入口：修正挂载目录属主 → 首次启动生成配置 → 降权 gost 运行
 set -e
+
+# bind-mount（-v /宿主机目录:/var/lib/gost-webui）时目录常属 root，
+# 直接以 gost 运行会报 mkdir/写文件 permission denied。以 root 入口统一修正属主。
+if [ "$(id -u)" = "0" ]; then
+  mkdir -p /var/lib/gost-webui /var/log/gost-webui /etc/gost-webui 2>/dev/null || true
+  chown -R gost:gost /var/lib/gost-webui /var/log/gost-webui /etc/gost-webui 2>/dev/null || true
+  RUNAS="su-exec gost"
+else
+  RUNAS=""
+fi
 
 CONF=/etc/gost-webui/panel.yml
 
@@ -40,7 +50,7 @@ EOF
   else
     ADMIN_PASS="$(rand16)"
   fi
-  /usr/local/bin/gost-webui -c "$CONF" -set-password "${ADMIN_USER:-admin} ${ADMIN_PASS}"
+  $RUNAS /usr/local/bin/gost-webui -c "$CONF" -set-password "${ADMIN_USER:-admin} ${ADMIN_PASS}"
   if [ -z "${ADMIN_PASSWORD:-}" ]; then
     echo "======================================================"
     echo " [gost-webui] 初始管理员账号"
@@ -50,11 +60,11 @@ EOF
     echo "======================================================"
   fi
   # 数据初始化需要面板本体跑一次建库；由主进程完成，这里不落库
-  touch /var/lib/gost-webui/.first-run
+  $RUNAS touch /var/lib/gost-webui/.first-run
 fi
 
 if [ -n "${LISTEN:-}" ]; then
-  /usr/local/bin/gost-webui -c "$CONF" -set-listen "$LISTEN" || true
+  $RUNAS /usr/local/bin/gost-webui -c "$CONF" -set-listen "$LISTEN" || true
 fi
 
-exec /usr/local/bin/gost-webui -c "$CONF"
+exec $RUNAS /usr/local/bin/gost-webui -c "$CONF"

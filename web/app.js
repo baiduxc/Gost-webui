@@ -35,6 +35,8 @@ const ICONS = {
   activity: '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
   rss: '<path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/><path d="M4.5 17.5h2.5V20H4.5z"/>',
   chevron: '<path d="M6 9l6 6 6-6"/>',
+  user: '<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
+  key: '<path d="M21 2l-2 2m-7.6 7.6a5.5 5.5 0 1 1-7.8 7.8 5.5 5.5 0 0 1 7.8-7.8zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3"/>',
 };
 
 function renderIcons(root = document) {
@@ -169,6 +171,7 @@ async function init() {
   loadBrand();
   let sess = null;
   try { sess = await api('api/session'); } catch (e) { sess = null; }
+  if (sess && sess.username) { const un = $('#userBtnName'); if (un) un.textContent = sess.username; }
   if (sess && sess.loggedIn) showApp(); else showLogin();
 }
 
@@ -204,6 +207,10 @@ function showApp() {
   $('#login').classList.add('hidden');
   $('#app').classList.remove('hidden');
   renderIcons();
+  // 右上角显示当前登录用户名
+  api('api/session').then(s => {
+    if (s && s.username) { const un = $('#userBtnName'); if (un) un.textContent = s.username; }
+  }).catch(() => {});
   refreshAll();
   if (!state.timer) state.timer = setInterval(refreshAll, 5000);
   if (!state.versionLoaded) {
@@ -229,10 +236,25 @@ $('#loginBtn').onclick = async () => {
   } finally { btn.disabled = false; }
 };
 $('#loginPass').addEventListener('keydown', e => { if (e.key === 'Enter') $('#loginBtn').click(); });
+// 右上角用户菜单
+$('#userBtn').onclick = e => {
+  e.stopPropagation();
+  const dd = $('#userDropdown');
+  const wasOpen = dd.classList.contains('open');
+  closeAllDropdowns();
+  if (!wasOpen) {
+    dd.classList.add('open');
+    $('#userBtn').setAttribute('aria-expanded', 'true');
+  }
+};
+$('#userPwBtn').onclick = () => { closeAllDropdowns(); openPasswordModal(); };
 $('#logoutBtn').onclick = async () => {
+  closeAllDropdowns();
+  if (!await uiConfirm('退出登录后需要重新输入密码，确定退出？', { title: '退出登录', okText: '退出', danger: true })) return;
   try { await api('api/logout', { method: 'POST' }); } catch (e) { /* ignore */ }
   showLogin();
 };
+document.addEventListener('click', e => { if (!e.target.closest('#userDropdown')) $('#userDropdown').classList.remove('open'); });
 $('#refreshBtn').onclick = () => refreshAll(true);
 $('#themeBtn').onclick = cycleTheme;
 
@@ -674,7 +696,7 @@ async function nodeTableClick(e) {
       } catch (err) { toast(err.message, 'err'); }
       break;
     case 'del':
-      if (!confirm(`确定删除节点「${node.name}」？会同时停止该监听端口。`)) return;
+      if (!await uiConfirm(`确定删除节点「${node.name}」？会同时停止该监听端口。`, { title: '删除节点', okText: '删除', danger: true })) return;
       try {
         await api(`api/nodes/${id}`, { method: 'DELETE' });
         toast('已删除');
@@ -703,6 +725,13 @@ document.addEventListener('click', closeAllDropdowns);
 // 滚动/缩放时菜单（fixed 定位）会脱离按钮，直接关闭
 window.addEventListener('resize', closeAllDropdowns);
 window.addEventListener('scroll', closeAllDropdowns, true);
+// 顶栏磨砂仅在滚动后出现
+const onScrollShade = () => {
+  const y = (document.querySelector('main')?.scrollTop ?? window.scrollY) || window.scrollY;
+  document.body.classList.toggle('scrolled', y > 4);
+};
+window.addEventListener('scroll', onScrollShade, true);
+onScrollShade();
 
 /* ---------------- 弹窗 ---------------- */
 let modalPreviousFocus = null;
@@ -720,6 +749,66 @@ function openModal(html, wide) {
   m.querySelector('.modal-close')?.setAttribute('aria-label', '关闭弹窗');
   m.querySelector('button, input, select, textarea')?.focus();
 }
+// 自定义确认弹窗（替代浏览器原生 confirm）：返回 Promise<boolean>
+function uiConfirm(message, { title = '确认操作', okText = '确定', danger = false } = {}) {
+  return new Promise(resolve => {
+    const m = $('#modal');
+    const wasHidden = m.classList.contains('hidden');
+    if (wasHidden) modalPreviousFocus = document.activeElement;
+    m.innerHTML = `<div class="modal-box confirm-box">
+      <h2>${esc(title)}</h2>
+      <p class="confirm-msg">${esc(message).replace(/\n/g, '<br>')}</p>
+      <div class="confirm-actions">
+        <button class="btn secondary sm" data-r="0">取消</button>
+        <button class="btn ${danger ? 'danger' : ''} sm" data-r="1">${esc(okText)}</button>
+      </div>
+    </div>`;
+    m.classList.remove('hidden');
+    m.setAttribute('role', 'dialog');
+    m.setAttribute('aria-modal', 'true');
+    const done = v => {
+      m.classList.add('hidden'); m.innerHTML = '';
+      if ($('#app')) $('#app').inert = false;
+      if (wasHidden && modalPreviousFocus?.isConnected) modalPreviousFocus.focus();
+      m.onclick = null;
+      resolve(v);
+    };
+    m.onclick = e => {
+      const b = e.target.closest('[data-r]');
+      if (b) return done(b.dataset.r === '1');
+      if (e.target === m) done(false);
+    };
+    m.querySelector('[data-r="1"]').focus();
+    if ($('#app')) $('#app').inert = true;
+  });
+}
+
+// 修改密码弹窗（从右上角用户菜单打开）
+function openPasswordModal() {
+  openModal(`
+    <div class="modal-head"><h2>修改密码</h2><button class="modal-close" aria-label="关闭">×</button></div>
+    <div class="row">
+      <div class="field"><label for="pwOld">原密码</label><input id="pwOld" type="password" autocomplete="current-password"></div>
+      <div class="field"><label for="pwNew">新密码（至少 6 位）</label><input id="pwNew" type="password" autocomplete="new-password"></div>
+    </div>
+    <div class="modal-foot" style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px">
+      <button class="btn secondary sm" id="pwCancelBtn">取消</button>
+      <button class="btn sm" id="pwSubmitBtn">保存</button>
+    </div>`);
+  const close = () => closeModal();
+  $('#pwCancelBtn').onclick = close;
+  $('#modal').querySelector('.modal-close').onclick = close;
+  const submit = async () => {
+    const btn = $('#pwSubmitBtn'); btn.disabled = true;
+    try {
+      await api('api/password', { method: 'POST', body: { oldPassword: $('#pwOld').value, newPassword: $('#pwNew').value } });
+      close(); toast('密码已修改');
+    } catch (e) { btn.disabled = false; toast(e.message, 'err'); }
+  };
+  $('#pwSubmitBtn').onclick = submit;
+  $('#pwNew').addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
+}
+
 function closeModal() {
   if ($('#modal').classList.contains('hidden')) return;
   $('#modal').classList.add('hidden');
@@ -1330,7 +1419,7 @@ async function openDetail(node) {
     if (r && r.url) copyText(r.url);
   };
   $('#d-reset').onclick = async () => {
-    if (!confirm('重置该节点的流量统计与配额计数？')) return;
+    if (!await uiConfirm('重置该节点的流量统计与配额计数？', { title: '重置流量' })) return;
     try {
       await api(`api/nodes/${node.id}/reset`, { method: 'POST' });
       toast('已重置');
@@ -1447,7 +1536,7 @@ async function openNodeSub(node) {
     </div>`;
   $$('#subBody [data-copy]').forEach(b => b.onclick = () => copyText(b.dataset.copy));
   $('#subResetToken').onclick = async () => {
-    if (!confirm('重置该节点订阅令牌？旧的订阅链接与二维码将立即失效。')) return;
+    if (!await uiConfirm('重置该节点订阅令牌？旧的订阅链接与二维码将立即失效。', { title: '重置令牌' })) return;
     try {
       await api(`api/nodes/${node.id}/subscription/reset`, { method: 'POST' });
       toast('已重置订阅令牌');
@@ -1639,14 +1728,15 @@ $('#sysSaveBtn').onclick = async () => {
       method: 'PUT',
       body: { listen: $('#sysListen').value.trim(), basePath: $('#sysBasePath').value.trim() },
     });
-    // 站点标题走 settings 接口，保存即热生效
+    // 站点标题走 settings 接口，保存即热生效（无需重启，不提示重启）
     const title = ($('#sysSiteTitle') && $('#sysSiteTitle').value.trim()) || '';
     await api('api/settings', { method: 'PUT', body: { siteTitle: title } });
     applyBrand(title);
-    toast('已保存，重启面板后生效（站点标题即时生效）');
+    if (!r.needRestart) { toast('已保存，站点标题即时生效'); }
+    else { toast('已保存'); }
     state.system = null;
     await loadSystem();
-    if (r.needRestart && confirm('配置已保存。是否立即重启面板使其生效？')) {
+    if (r.needRestart && await uiConfirm('监听地址或访问路径有变更，需要重启面板才能生效。是否立即重启？', { title: '需要重启', okText: '立即重启' })) {
       await api('api/system/restart', { method: 'POST' });
       waitReboot();
     }
@@ -1654,7 +1744,7 @@ $('#sysSaveBtn').onclick = async () => {
 };
 
 $('#sysRestartBtn').onclick = async () => {
-  if (!confirm('确定重启面板？当前页面会短暂断开。')) return;
+  if (!await uiConfirm('确定重启面板？当前页面会短暂断开。', { title: '重启面板' })) return;
   try {
     await api('api/system/restart', { method: 'POST' });
     waitReboot();
@@ -1736,7 +1826,7 @@ $('#saveSubBtn').onclick = async () => {
 
 // 清除手动证书，切回 ACME。
 $('#clearCertBtn').onclick = async () => {
-  if (!confirm('清空证书区并交回 ACME 自动证书？')) return;
+  if (!await uiConfirm('清空证书区并交回 ACME 自动证书？', { title: '清除手动证书' })) return;
   try {
     await api('api/sub-config', { method: 'PUT', body: { tlsCert: '', tlsKey: '' } });
     state.subConfig = await api('api/sub-config');
@@ -1767,16 +1857,8 @@ $('#issueCertBtn').onclick = async () => {
   finally { btn.disabled = false; btn.textContent = old; }
 };
 
-$('#savePwBtn').onclick = async () => {
-  try {
-    await api('api/password', { method: 'POST', body: { oldPassword: $('#pwOld').value, newPassword: $('#pwNew').value } });
-    $('#pwOld').value = ''; $('#pwNew').value = '';
-    toast('密码已修改');
-  } catch (e) { toast(e.message, 'err'); }
-};
-
 $('#gostRestartBtn').onclick = async () => {
-  if (!confirm('重启 gost 会短暂中断所有转发连接，继续？')) return;
+  if (!await uiConfirm('重启 gost 会短暂中断所有转发连接，继续？', { title: '重启转发引擎', okText: '重启' })) return;
   const btn = $('#gostRestartBtn');
   btn.disabled = true;
   try {
@@ -1819,7 +1901,7 @@ $('#backupFileInput').onchange = e => {
 };
 $('#backupRestoreBtn').onclick = async () => {
   if (!restoreFile) { toast('请先选择备份文件', 'err'); return; }
-  if (!confirm(`确认用「${restoreFile.name}」覆盖当前面板数据？\n当前数据库会先另存为 panel.db.pre-restore，面板随后自动重启。`)) return;
+  if (!await uiConfirm(`确认用「${restoreFile.name}」覆盖当前面板数据？\n当前数据库会先另存为 panel.db.pre-restore，面板随后自动重启。`, { title: '导入恢复', okText: '恢复', danger: true })) return;
   const btn = $('#backupRestoreBtn');
   btn.disabled = true;
   try {

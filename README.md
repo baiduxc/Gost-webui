@@ -74,6 +74,21 @@ docker run -d --name gost-webui \
 
 打开 `http://服务器IP:8787` 用上面设置的账号登录。节点转发端口按需再加 `-p 45678:45678`。
 
+想把数据放在宿主机目录（而不是 docker 卷）也可以，容器启动时会自动修正目录属主，无需手动 chmod：
+
+```bash
+mkdir -p /opt/gost-webui/{data,logs,conf}
+docker run -d --name gost-webui \
+  --restart unless-stopped \
+  -p 8787:8787 \
+  -e ADMIN_USER=admin \
+  -e ADMIN_PASSWORD=*** \
+  -v /opt/gost-webui/data:/var/lib/gost-webui \
+  -v /opt/gost-webui/logs:/var/log/gost-webui \
+  -v /opt/gost-webui/conf:/etc/gost-webui \
+  ghcr.io/baiduxc/gost-webui:latest
+```
+
 或使用仓库中的 compose 文件（编辑好密码后）：
 
 ```bash

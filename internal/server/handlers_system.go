@@ -87,6 +87,8 @@ func (s *Server) handleSystemUpdate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "请求格式错误")
 		return
 	}
+	oldListen, oldBase := s.effectiveListen(), s.effectiveBasePath()
+	changed := false
 	if req.Listen != nil {
 		v := strings.TrimSpace(*req.Listen)
 		if port, err := strconv.Atoi(v); err == nil && port >= 1 && port <= 65535 {
@@ -100,6 +102,7 @@ func (s *Server) handleSystemUpdate(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+		changed = changed || v != oldListen
 	}
 	if req.BasePath != nil {
 		v := config.NormalizeBasePath(*req.BasePath)
@@ -114,12 +117,13 @@ func (s *Server) handleSystemUpdate(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+		changed = changed || v != oldBase
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":          true,
 		"listen":      s.effectiveListen(),
 		"basePath":    s.effectiveBasePath(),
-		"needRestart": true,
+		"needRestart": changed,
 	})
 }
 

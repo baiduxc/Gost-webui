@@ -25,17 +25,17 @@ RUN apk add --no-cache curl && \
 
 # ---------- 运行时 ----------
 FROM alpine:3.20
-RUN apk add --no-cache ca-certificates tzdata curl && \
+RUN apk add --no-cache ca-certificates tzdata curl su-exec && \
     addgroup -S gost && adduser -S gost -G gost
 ENV TZ=Asia/Shanghai
 COPY --from=panel /out/gost-webui /usr/local/bin/gost-webui
 COPY --from=gostbin /out/gost /usr/local/bin/gost
 COPY --from=singbox /sing-box /usr/local/bin/sing-box
 COPY docker/entrypoint.sh /entrypoint.sh
+# 以 root 启动：entrypoint 先修正挂载目录属主（bind-mount 场景），再降权到 gost 运行
 RUN chmod +x /entrypoint.sh && \
     mkdir -p /var/lib/gost-webui /var/log/gost-webui /etc/gost-webui && \
     chown -R gost:gost /var/lib/gost-webui /var/log/gost-webui /etc/gost-webui
-USER gost
 VOLUME ["/var/lib/gost-webui", "/var/log/gost-webui", "/etc/gost-webui"]
 EXPOSE 8787
 ENTRYPOINT ["/entrypoint.sh"]

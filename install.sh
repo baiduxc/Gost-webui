@@ -499,15 +499,17 @@ interactive_config() {
   echo "---------- 面板初始配置（直接回车使用默认值）----------"
   local v
   if [ -z "$GH_PROXY" ]; then
-    read -rp "是否使用 GitHub 加速节点 (ghfast.top) 下载？[y/N]: " v < "$TTY_IN" || true
-    case "${v:-n}" in
+    echo "  下载 GitHub 文件时是否使用加速节点 (ghfast.top)？"
+    echo "    国内服务器直连 GitHub 可能很慢或失败，建议选 Y；海外服务器直接回车（默认 N，直连）。"
+    read -rp "  使用加速节点？输入 Y 使用 / 直接回车跳过（默认 N=直连 GitHub）: " v < "$TTY_IN" || true
+    case "$v" in
       [Yy]*) GH_PROXY="https://ghfast.top" ;;
       *) GH_PROXY="" ;;
     esac
     if [ -n "$GH_PROXY" ]; then
-      echo "  将通过加速节点下载: $GH_PROXY"
+      echo "  ✓ 将通过加速节点下载: $GH_PROXY"
     else
-      echo "  直连 GitHub 下载"
+      echo "  ✓ 直连 GitHub 下载（未使用加速）"
     fi
   fi
   read -rp "面板端口 [${PANEL_PORT}]: " v < "$TTY_IN" || true
