@@ -284,13 +284,20 @@ install_gost() {
 }
 
 try_release_gost() {
-  local ver rurl tmp
-  for ver in 3.3.1 3.3.0 3.2.6; do
+  local ver rurl tmp n
+  for ver in 3.3.0 3.2.6 3.2.5; do
     rurl="$(gh_url "https://github.com/go-gost/gost/releases/download/v${ver}/gost_${ver}_linux_${GOARCH}.tar.gz")"
     [ "$GOARCH" = "arm" ] && rurl="$(gh_url "https://github.com/go-gost/gost/releases/download/v${ver}/gost_${ver}_linux_armv7.tar.gz")"
     tmp="/tmp/gost_${ver}.tar.gz"
-    info "尝试下载 gost v${ver} 预编译包…"
-    if curl -fsSL --retry 2 --connect-timeout 15 -o "$tmp" "$rurl" 2>/dev/null; then
+    if [ -n "$GH_PROXY" ]; then
+      info "下载 gost v${ver} 预编译包（经加速节点 ${GH_PROXY}）…"
+    else
+      info "下载 gost v${ver} 预编译包（直连 GitHub）…"
+    fi
+    echo "    $rurl"
+    if curl -fSL --progress-bar --retry 2 --connect-timeout 15 -o "$tmp" "$rurl"; then
+      n=$(du -h "$tmp" 2>/dev/null | cut -f1)
+      ok "下载完成（$n），校验中…"
       if tar -xzf "$tmp" -C /tmp gost 2>/dev/null; then
         mv /tmp/gost "$PANEL_DIR/bin/gost"
         chmod +x "$PANEL_DIR/bin/gost"
