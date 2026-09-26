@@ -32,7 +32,7 @@ if [ -n "$BASE_PATH" ]; then
 fi
 GOPROXY="${GOPROXY:-https://goproxy.cn,direct}"
 # GitHub 加速域名（如 https://ghfast.top）。默认空=直连 GitHub；
-# 交互式安装会询问，也可用环境变量 GH_PROXY 或 --gh-proxy 预先指定，留空/回车即直连。
+# 交互式安装会询问 Y/n（默认 n=直连），也可用环境变量 GH_PROXY 或 --gh-proxy 预先指定。
 GH_PROXY="${GH_PROXY:-}"
 # 给 GitHub 地址加上加速前缀
 gh_url() {
@@ -473,11 +473,11 @@ interactive_config() {
   echo "---------- 面板初始配置（直接回车使用默认值）----------"
   local v
   if [ -z "$GH_PROXY" ]; then
-    read -rp "是否使用 GitHub 加速节点下载？输入代理域名（如 https://ghfast.top），留空直连 GitHub: " v < "$TTY_IN" || true
-    v="${v%/}"
-    if [ -n "$v" ]; then
-      case "$v" in https://*|http://*) GH_PROXY="$v" ;; *) GH_PROXY="https://$v" ;; esac
-    fi
+    read -rp "是否使用 GitHub 加速节点 (ghfast.top) 下载？[y/N]: " v < "$TTY_IN" || true
+    case "${v:-n}" in
+      [Yy]*) GH_PROXY="https://ghfast.top" ;;
+      *) GH_PROXY="" ;;
+    esac
     if [ -n "$GH_PROXY" ]; then
       echo "  将通过加速节点下载: $GH_PROXY"
     else
