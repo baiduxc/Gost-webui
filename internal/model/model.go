@@ -80,6 +80,13 @@ type Node struct {
 	// TotalIn/TotalOut 是面板累计的流量（可重置）。
 	TotalIn  uint64 `json:"totalIn"`
 	TotalOut uint64 `json:"totalOut"`
+
+	// CounterIn/CounterOut 是上次采样时引擎侧的累计计数原值（持久化，防面板重启后把
+	// 引擎的整个生命周期计数重复累加进 TotalIn/Out）。CounterPid 记录引擎进程 pid：
+	// pid 变化 = 引擎重启过，计数已归零，基线需重建。API 视图层剥离。
+	CounterIn  uint64 `json:"counterIn"`
+	CounterOut uint64 `json:"counterOut"`
+	CounterPid int    `json:"counterPid"`
 }
 
 // ServiceNames 返回该节点在 gost 中对应的服务名。

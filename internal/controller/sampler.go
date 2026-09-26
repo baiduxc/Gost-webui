@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"gost-webui/internal/model"
@@ -78,13 +79,24 @@ func (c *Controller) prune() {
 }
 
 // lastCounters 记录上一次采样到的 gost 累计值（用于计算增量）。
+// sampleBusy 防止定时器采样与退出前 SampleOnce 并发运行——
+// 两个采样协程会读到相同的 prev 并各自把增量记一遍，导致流量翻倍。
 var lastCounters = struct {
+	sync.Mutex
 	m map[string]counters
 }{m: map[string]counters{}}
 
 func (c *Controller) sampleOnce(ctx context.Context) {
+	if !lastCounters.TryLock() {
+		return // 已有采样在跑，跳过本轮（增量不会丢，下轮一起结算）
+	}
+	defer lastCounters.Unlock()
 	sctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
+
+	hour := store.LocalHourStart(time.Now().Unix())
+	// reality 引擎独立于 gost：gost 不可达时 sing-box 采样/配额必须照常运转
+	defer c.sampleReality(sctx, hour)
 
 	services, err := c.client().Services(sctx)
 	if err != nil {
@@ -135,9 +147,12 @@ func (c *Controller) sampleOnce(ctx context.Context) {
 		}
 	}
 
-	hour := store.LocalHourStart(time.Now().Unix())
 	nodes := c.Nodes()
 	for _, n := range nodes {
+		if n.IsReality() {
+			continue // reality 节点无 gost 服务，交给 sampleReality；否则这里会把
+			// 持久化的引擎基线 Counter* 清零，造成面板重启后整段计数被重复累加
+		}
 		var in, out, curConns, totalConns, errs uint64
 		running := false
 		state := ""
@@ -155,15 +170,22 @@ func (c *Controller) sampleOnce(ctx context.Context) {
 			errs += item.errs
 		}
 
-		prev := lastCounters.m[n.ID]
+		prev, seen := lastCounters.m[n.ID]
+		if !seen {
+			// 面板刚重启：以持久化的引擎计数为基准，绝不把引擎自启动以来的
+			// 全部累计值重新加一遍（否则 gost 未重启时流量会翻倍虚增）
+			prev = counters{in: n.CounterIn, out: n.CounterOut}
+		}
 		dIn, dOut := delta(prev.in, in), delta(prev.out, out)
 		lastCounters.m[n.ID] = counters{in: in, out: out}
-		if dIn > 0 || dOut > 0 {
+		if dIn > 0 || dOut > 0 || !seen {
 			if err := c.Store.AddTraffic(n.ID, hour, dIn, dOut); err != nil {
 				c.Log.Warn("写入流量失败", "node", n.ID, "err", err)
 			}
 			n.TotalIn += dIn
 			n.TotalOut += dOut
+			n.CounterIn = in
+			n.CounterOut = out
 			if err := c.Store.SaveNode(n); err != nil {
 				c.Log.Warn("更新节点累计流量失败", "node", n.ID, "err", err)
 			}
@@ -189,8 +211,6 @@ func (c *Controller) sampleOnce(ctx context.Context) {
 		c.mu.Unlock()
 	}
 
-	c.sampleReality(sctx, hour)
-
 	// 触发上下线/流量预警通知
 	if c.Alerts != nil {
 		c.mu.RLock()
@@ -213,7 +233,8 @@ func delta(prev, cur uint64) uint64 {
 	if cur >= prev {
 		return cur - prev
 	}
-	return cur // 计数器被重置（服务重建/gost 重启）
+	// 计数器回退 = 引擎/服务重启过，之前的量已经计过，新基线从 0 起步不重复累加
+	return 0
 }
 
 // sampleReality 采样 sing-box 实例：进程级累计字节差分入小时桶，
@@ -245,15 +266,39 @@ func (c *Controller) sampleReality(ctx context.Context, hour int64) {
 			continue
 		}
 		st := stats[n.ID]
-		prev := lastCounters.m[n.ID]
-		dIn, dOut := delta(prev.in, st.Down), delta(prev.out, st.Up)
-		lastCounters.m[n.ID] = counters{in: st.Down, out: st.Up}
-		if dIn > 0 || dOut > 0 {
+		prev, seen := lastCounters.m[n.ID]
+		if !seen {
+			prev = counters{in: n.CounterIn, out: n.CounterOut}
+		}
+		if st.PID > 0 && n.CounterPid != st.PID {
+			// 引擎进程换过（孤儿回收/崩溃重启）：clash 计数已归零，基线作废
+			prev = counters{}
+		}
+		if n.CounterPid == -1 {
+			// 刚重置过流量：以当前引擎计数立基线，本轮不累加
+			prev = counters{in: st.Up, out: st.Down}
+			lastCounters.m[n.ID] = prev
+			n.CounterIn, n.CounterOut = st.Up, st.Down
+			n.CounterPid = st.PID
+			_ = c.Store.SaveNode(n)
+			lv := &model.Live{Running: st.Running}
+			c.mu.Lock()
+			c.live[n.ID] = lv
+			c.mu.Unlock()
+			continue
+		}
+		// 语义对齐 gost 侧：In = 客户端上行（clash uploadTotal），Out = 客户端下行（clash downloadTotal）
+		dIn, dOut := delta(prev.in, st.Up), delta(prev.out, st.Down)
+		lastCounters.m[n.ID] = counters{in: st.Up, out: st.Down}
+		if dIn > 0 || dOut > 0 || !seen {
 			if err := c.Store.AddTraffic(n.ID, hour, dIn, dOut); err != nil {
 				c.Log.Warn("写入流量失败", "node", n.ID, "err", err)
 			}
 			n.TotalIn += dIn
 			n.TotalOut += dOut
+			n.CounterIn = st.Up
+			n.CounterOut = st.Down
+			n.CounterPid = st.PID
 			if err := c.Store.SaveNode(n); err != nil {
 				c.Log.Warn("更新节点累计流量失败", "node", n.ID, "err", err)
 			}

@@ -151,6 +151,9 @@ func (s *Server) buildView(n *model.Node) *nodeView {
 	// API 输出副本：剥离 REALITY 私钥，避免下发到前端；缓存节点保持不变。
 	public := *n
 	public.RealityPriv = ""
+	public.CounterIn = 0
+	public.CounterOut = 0
+	public.CounterPid = 0
 	v := &nodeView{Node: &public, Live: s.ctl.Live(n.ID)}
 	if n.Mode != "gost" {
 		if info, err := link.Parse(n.LandingLink); err == nil {

@@ -1580,7 +1580,10 @@ function renderSystem() {
   renderSubConfig();
 }
 
-// renderSubConfig 渲染「订阅与证书」卡片（出于安全不回填私钥）。
+// renderSubConfig 渲染「订阅与证书」卡片。证书区只有一个：
+// 直接显示当前生效证书（ACME 或手动）的证书/私钥内容；
+// 修改（粘贴新内容）后点保存 → 转为手动证书；清空后保存 → 交回 ACME。
+let certOrig = { cert: '', key: '' };
 function renderSubConfig() {
   const sc = state.subConfig;
   if (!sc) return;
@@ -1603,27 +1606,23 @@ function renderSubConfig() {
       + (c.err ? ` · ${esc(c.err)}` : ' · 填写订阅域名与 ACME 邮箱后点击「申请/续期证书」');
   }
 
-  $('#subTlsCert').placeholder = sc.hasManualCert ? '已配置（粘贴新 PEM 可更换）' : '-----BEGIN CERTIFICATE-----（留空则用 ACME 自动证书）';
-  $('#subTlsKey').placeholder = sc.hasManualCert ? '已配置（粘贴新私钥可更换）' : '-----BEGIN PRIVATE KEY-----';
-  $('#manualCertHint').textContent = sc.hasManualCert
-    ? '已配置手动证书（优先于 ACME）。如需更换，粘贴新的证书与私钥后保存；留空保存不会改动现有证书。'
-    : '留空则使用 ACME 自动证书；粘贴证书与私钥并保存后，手动证书将优先于 ACME。';
-  $('#clearCertBtn').style.display = sc.hasManualCert ? '' : 'none';
-
-  // 当前生效证书内容只读展示（保存/签发后即时刷新）
-  const has = !!sc.certPEM;
-  $('#certContentLabel').style.display = has ? '' : 'none';
-  $('#certContentBox').style.display = has ? '' : 'none';
-  $('#certContentBtns').style.display = has ? '' : 'none';
-  if (has) {
-    const srcName = sc.certSource === 'manual' ? '手动上传' : sc.certSource === 'acme' ? 'ACME 自动签发' : '';
-    $('#certContentLabel').textContent = '当前生效的证书与私钥' + (srcName ? `（${srcName}）` : '');
-    $('#certViewCert').value = sc.certPEM || '';
-    $('#certViewKey').value = sc.keyPEM || '（ACME 私钥存于服务器证书目录，不在页面展示）';
-  }
+  // 单证书区：回填当前生效内容；无证书则留空占位
+  certOrig.cert = sc.certPEM || '';
+  certOrig.key = sc.keyPEM || '';
+  $('#subTlsCert').value = certOrig.cert;
+  $('#subTlsKey').value = certOrig.key;
+  const srcName = sc.certSource === 'manual' ? '手动上传' : sc.certSource === 'acme' ? 'ACME 自动签发' : '';
+  $('#certAreaLabel').textContent = '证书（当前生效' + (srcName ? ` · ${srcName}` : '，未配置') + '）';
+  $('#subTlsCert').placeholder = '-----BEGIN CERTIFICATE-----（粘贴内容并保存即改用手动证书）';
+  $('#subTlsKey').placeholder = '-----BEGIN PRIVATE KEY-----';
+  $('#manualCertHint').textContent = sc.certSource === 'manual'
+    ? '当前使用手动证书（优先于 ACME）。修改后点「保存」生效；清空并保存则交回 ACME 自动证书。'
+    : sc.certSource === 'acme'
+      ? '上方为 ACME 自动签发的证书与私钥（只读参考）。想改用自有证书：把内容替换掉再保存即可；想恢复自动：清空两个框并保存。'
+      : '尚未有生效证书。填写域名与邮箱后点「申请/续期证书」自动签发；或直接粘贴自有证书与私钥并保存。';
+  $('#clearCertBtn').style.display = sc.certSource ? '' : 'none';
 }
 
-// copyCert 复制证书内容区文本到剪贴板
 function copyCertField(id) {
   const t = $(id).value;
   if (!t) { toast('内容为空', 'err'); return; }
@@ -1631,8 +1630,8 @@ function copyCertField(id) {
     $(id).select(); document.execCommand('copy'); toast('已复制到剪贴板');
   });
 }
-$('#copyCertBtn').onclick = () => copyCertField('#certViewCert');
-$('#copyCertKeyBtn').onclick = () => copyCertField('#certViewKey');
+$('#copyCertBtn').onclick = () => copyCertField('#subTlsCert');
+$('#copyCertKeyBtn').onclick = () => copyCertField('#subTlsKey');
 
 $('#sysSaveBtn').onclick = async () => {
   try {
@@ -1710,8 +1709,9 @@ $('#saveStatsBtn').onclick = async () => {
 $('#saveSubBtn').onclick = async () => {
   const certPem = $('#subTlsCert').value.trim();
   const keyPem = $('#subTlsKey').value.trim();
-  if ((certPem && !keyPem) || (!certPem && keyPem)) {
-    toast('证书与私钥需同时填写', 'err');
+  const edited = certPem !== certOrig.cert.trim() || keyPem !== certOrig.key.trim();
+  if (edited && !!certPem !== !!keyPem) {
+    toast('更换证书需证书与私钥同时填写（或同时清空）', 'err');
     return;
   }
   const body = {
@@ -1720,8 +1720,8 @@ $('#saveSubBtn').onclick = async () => {
     domain: $('#subDomain').value.trim(),
     email: $('#subEmail').value.trim(),
   };
-  // 仅在粘贴了新证书时提交，避免普通保存清除已有手动证书。
-  if (certPem && keyPem) { body.tlsCert = certPem; body.tlsKey = keyPem; }
+  // 仅当用户改动了证书区才提交 tls 字段：粘贴新内容=手动证书；清空=交回 ACME。
+  if (edited) { body.tlsCert = certPem; body.tlsKey = keyPem; }
   const btn = $('#saveSubBtn');
   btn.disabled = true;
   try {
@@ -1736,12 +1736,11 @@ $('#saveSubBtn').onclick = async () => {
 
 // 清除手动证书，切回 ACME。
 $('#clearCertBtn').onclick = async () => {
-  if (!confirm('清除手动证书并切回 ACME 自动证书？')) return;
+  if (!confirm('清空证书区并交回 ACME 自动证书？')) return;
   try {
     await api('api/sub-config', { method: 'PUT', body: { tlsCert: '', tlsKey: '' } });
-    $('#subTlsCert').value = ''; $('#subTlsKey').value = '';
     state.subConfig = await api('api/sub-config');
-    toast('已清除手动证书');
+    toast('已清空，交回 ACME 自动证书');
     renderSubConfig();
   } catch (e) { toast(e.message, 'err'); }
 };

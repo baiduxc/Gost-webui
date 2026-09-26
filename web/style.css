@@ -225,9 +225,9 @@ select::-ms-expand { display: none; }
   width: 100%; max-width: none; margin: 0;
   /* 全宽磨砂条：背景铺满视口，内容仍按页宽居中（左右 padding 把内容夹回 --page-max-width 列） */
   padding: 14px max(20px, calc((100% - var(--page-max-width)) / 2 + 20px)) 10px;
-  background: color-mix(in srgb, var(--color-bg) 82%, transparent);
+  /* 与页面同色但半透明：静止时看不出差异，滚动时内容在条下穿过即呈现磨砂 */
+  background: color-mix(in srgb, var(--color-bg) 78%, transparent);
   backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
-  border-bottom: 1px solid var(--color-border-light);
 }
 .brand {
   display: flex; align-items: center; gap: 10px; flex-shrink: 0; margin: 0 -4px 0 -4px; padding: 4px 10px 4px 4px;

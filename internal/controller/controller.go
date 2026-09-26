@@ -371,6 +371,26 @@ func (c *Controller) ResetNodeTraffic(ctx context.Context, n *model.Node) error 
 		}
 	}
 	n.TotalIn, n.TotalOut = 0, 0
+	lastCounters.Lock()
+	delete(lastCounters.m, n.ID)
+	lastCounters.Unlock()
+	// reality：直接以"引擎此刻的累计值"为基线，重置窗口内的流量不丢也不重复计
+	if n.IsReality() && c.SB != nil {
+		xctx, xcancel := context.WithTimeout(context.Background(), 5*time.Second)
+		s := c.SB.Stats(xctx, n.ID)
+		xcancel()
+		if s.PID > 0 { // 引擎可达：以当前累计值为基线
+			n.CounterIn, n.CounterOut = s.Up, s.Down
+			n.CounterPid = s.PID
+		} else {
+			n.CounterIn, n.CounterOut = 0, 0
+			n.CounterPid = -1 // 引擎不可达时才用哨兵，下轮采样立基线
+		}
+		return c.Store.SaveNode(n)
+	}
+	// gost：配额清零即基线归零
+	n.CounterIn, n.CounterOut = 0, 0
+	n.CounterPid = -1
 	return c.Store.SaveNode(n)
 }
 

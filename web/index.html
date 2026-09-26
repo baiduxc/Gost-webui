@@ -281,11 +281,11 @@
           <div class="notice" id="subPreview"></div>
           <div class="notice" id="certStatus"></div>
 
-          <div class="section-label">手动上传证书（可选，优先于 ACME）</div>
+          <div class="section-label" id="certAreaLabel">证书 (当前生效)</div>
           <div class="row">
             <div class="field">
               <label for="subTlsCert">证书 (PEM)</label>
-              <textarea id="subTlsCert" rows="4" placeholder="-----BEGIN CERTIFICATE-----（留空则用 ACME 自动证书）"></textarea>
+              <textarea id="subTlsCert" rows="4" placeholder="-----BEGIN CERTIFICATE-----"></textarea>
             </div>
             <div class="field">
               <label for="subTlsKey">私钥 (PEM)</label>
@@ -293,23 +293,12 @@
             </div>
           </div>
           <div class="hint" id="manualCertHint" style="margin-top:8px"></div>
-          <button class="btn ghost sm" id="clearCertBtn" style="display:none">清除手动证书（切回 ACME）</button>
-
-          <div class="section-label" id="certContentLabel" style="display:none">当前生效的证书与私钥</div>
-          <div class="row" id="certContentBox" style="display:none">
-            <div class="field">
-              <label>证书 (PEM)</label>
-              <textarea id="certViewCert" rows="5" readonly tabindex="-1"></textarea>
-            </div>
-            <div class="field">
-              <label>私钥 (PEM)</label>
-              <textarea id="certViewKey" rows="5" readonly tabindex="-1"></textarea>
-            </div>
-          </div>
-          <div class="btn-group" id="certContentBtns" style="display:none">
+          <div class="btn-group" style="margin-top:8px">
             <button class="btn ghost sm" id="copyCertBtn">复制证书</button>
             <button class="btn ghost sm" id="copyCertKeyBtn">复制私钥</button>
+            <button class="btn ghost sm" id="clearCertBtn" style="display:none">清空（交回 ACME 自动）</button>
           </div>
+
         </div>
 
         <div class="card">

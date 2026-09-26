@@ -268,14 +268,14 @@ func (s *Server) handleBackup(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleBackupRestore 上传备份文件恢复数据库：校验 bbolt 魔数与完整性后，
-// 原子替换 panel.db，然后触发面板重启（旧数据全部让位于备份内容）。
 // handleBrand 公开返回站点标题（登录页也需要显示），无任何敏感信息。
 func (s *Server) handleBrand(w http.ResponseWriter, r *http.Request) {
 	title, _ := s.ctl.Store.GetSetting("site_title")
 	writeJSON(w, http.StatusOK, map[string]any{"siteTitle": title})
 }
 
+// handleBackupRestore 上传备份文件恢复数据库：校验 bbolt 魔数与完整性后，
+// 原子替换 panel.db，然后触发面板重启（旧数据全部让位于备份内容）。
 func (s *Server) handleBackupRestore(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 64<<20) // 上限 64MB
 	if err := r.ParseMultipartForm(8 << 20); err != nil {

@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -20,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -332,6 +334,105 @@ func (i *instance) stopProcess() {
 	}
 }
 
+// reapOrphan 回收孤儿实例：面板异常退出（OOM/kill -9）时子进程可能存活并继续占用
+// 监听端口，此时若再拉新实例会因端口占用失败退避，而旧孤儿的引擎计数与清零后的
+// 内存基线错位，导致流量被整体重复累加。启动前按 pid 文件+端口双保险清掉旧进程。
+func (i *instance) reapOrphan() {
+	// 1) pid 文件
+	pidFile := filepath.Join(i.dir, "sb.pid")
+	if data, err := os.ReadFile(pidFile); err == nil {
+		if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil && pid > 0 {
+			if proc, err := os.FindProcess(pid); err == nil && proc.Signal(syscall.Signal(0)) == nil {
+				if cmdline, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid)); err == nil &&
+					strings.Contains(string(cmdline), "-D "+i.dir) {
+					i.log.Warn("回收上一代孤儿 sing-box 进程", "node", i.id, "pid", pid)
+					_ = proc.Signal(syscall.SIGTERM)
+					for k := 0; k < 20; k++ {
+						time.Sleep(200 * time.Millisecond)
+						if proc.Signal(syscall.Signal(0)) != nil {
+							break
+						}
+					}
+					_ = proc.Kill()
+				}
+			}
+		}
+	}
+	// 2) 端口兜底：谁占着我们的 clash API 端口就杀谁（cmdline 校验防误杀）
+	if pid := pidListeningOn(i.apiAddr); pid > 0 {
+		if cmdline, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid)); err == nil &&
+			strings.Contains(string(cmdline), "sing-box") && strings.Contains(string(cmdline), i.dir) {
+			i.log.Warn("回收占用 API 端口的孤儿进程", "node", i.id, "pid", pid)
+			if proc, err := os.FindProcess(pid); err == nil {
+				_ = proc.Signal(syscall.SIGTERM)
+				time.Sleep(500 * time.Millisecond)
+				_ = proc.Kill()
+			}
+		}
+	}
+}
+
+// pidListeningOn 通过 /proc/net/tcp(6) 找到监听 addr:port 的进程 pid（需要同 uid 权限，失败返回 0）
+func pidListeningOn(addr string) int {
+	_, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		return 0
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return 0
+	}
+	hexPort := fmt.Sprintf("%04X", port)
+	inodes := map[string]bool{}
+	for _, f := range []string{"/proc/net/tcp", "/proc/net/tcp6"} {
+		data, err := os.ReadFile(f)
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(data), "\n")[1:] {
+			fields := strings.Fields(line)
+			if len(fields) < 10 {
+				continue
+			}
+			// local_address 形如 0100007F:4D9D，状态 0A=LISTEN
+			if !strings.HasSuffix(fields[1], ":"+hexPort) || fields[3] != "0A" {
+				continue
+			}
+			inodes[fields[9]] = true
+		}
+	}
+	if len(inodes) == 0 {
+		return 0
+	}
+	pids, _ := os.ReadDir("/proc")
+	for _, pd := range pids {
+		if !pd.IsDir() {
+			continue
+		}
+		fdDir := filepath.Join("/proc", pd.Name(), "fd")
+		fds, err := os.ReadDir(fdDir)
+		if err != nil {
+			continue
+		}
+		for _, fd := range fds {
+			link, err := os.Readlink(filepath.Join(fdDir, fd.Name()))
+			if err == nil && strings.HasPrefix(link, "socket:[") {
+				if inodes[strings.Trim(link, "socket:[]")] {
+					if pid, err := strconv.Atoi(pd.Name()); err == nil {
+						return pid
+					}
+				}
+			}
+		}
+	}
+	return 0
+}
+
+// writePidFile 记录当前实例 pid（supervise 启动成功后调用）。
+func (i *instance) writePidFile(pid int) {
+	_ = os.WriteFile(filepath.Join(i.dir, "sb.pid"), []byte(strconv.Itoa(pid)), 0o600)
+}
+
 // restart 停止旧进程并重新拉起 + 守护。
 func (i *instance) restart(ctx context.Context) {
 	i.stopProcess()
@@ -353,6 +454,7 @@ func (i *instance) supervise() {
 		}
 		i.log.Info("启动 sing-box 实例", "node", i.id, "api", i.apiAddr)
 		out := newRotatingWriter(i.logFile, 4<<20)
+		i.reapOrphan()
 		cmd := exec.Command(i.bin, "run", "-D", i.dir, "-c", i.confFile)
 		cmd.Stdout = out
 		cmd.Stderr = out
@@ -372,6 +474,7 @@ func (i *instance) supervise() {
 		i.mu.Lock()
 		i.cmd = cmd
 		i.mu.Unlock()
+		i.writePidFile(cmd.Process.Pid)
 		backoff = time.Second
 
 		err := cmd.Wait()
