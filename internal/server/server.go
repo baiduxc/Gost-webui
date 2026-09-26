@@ -100,7 +100,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/settings", s.auth(s.handleGetSettings))
 	s.mux.HandleFunc("PUT /api/settings", s.auth(s.handleUpdateSettings))
 	s.mux.HandleFunc("POST /api/password", s.auth(s.handleChangePassword))
+	s.mux.HandleFunc("GET /api/brand", s.handleBrand)
 	s.mux.HandleFunc("GET /api/backup", s.auth(s.handleBackup))
+	s.mux.HandleFunc("POST /api/backup/restore", s.auth(s.handleBackupRestore))
 
 	s.mux.HandleFunc("GET /api/system", s.auth(s.handleSystemInfo))
 	s.mux.HandleFunc("GET /api/reality/available", s.auth(s.handleRealityAvailable))

@@ -32,12 +32,10 @@
 <!-- 主界面 -->
 <div id="app" class="app hidden">
   <aside class="sidebar" id="sidebar">
-    <div class="brand">
-      <div>
-        <div class="name"><svg width="30" height="30" viewBox="0 0 32 32" fill="none" aria-hidden="true"><path d="M5 7 10.5 25 16 12.5 21.5 25 27 7" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
-        <div class="sub">Gost面板 <span id="brandSub"></span></div>
-      </div>
-    </div>
+    <button class="brand" id="brandBtn" title="返回首页">
+      <span class="name"><svg width="30" height="30" viewBox="0 0 32 32" fill="none" aria-hidden="true"><path d="M5 7 10.5 25 16 12.5 21.5 25 27 7" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+      <span class="brand-title" id="brandTitle">Gost-WebUI</span>
+    </button>
     <nav class="nav" id="nav">
       <a href="#overview" data-view="overview" class="active"><span data-icon="grid"></span>概览</a>
       <a href="#nodes" data-view="nodes"><span data-icon="server"></span>节点</a>
@@ -198,6 +196,11 @@
               <input id="sysBasePath" type="text" placeholder="/panel（留空为根路径）">
               <div class="hint">例如填 <span class="mono">/panel</span>，访问地址变为 <span class="mono">http://IP:端口/panel/</span></div>
             </div>
+            <div class="field">
+              <label for="sysSiteTitle">站点标题</label>
+              <input id="sysSiteTitle" type="text" maxlength="40" placeholder="Gost-WebUI">
+              <div class="hint">显示在左上角 LOGO 旁，留空恢复默认</div>
+            </div>
           </div>
           <div class="notice" id="sysAccessInfo"></div>
         </div>
@@ -291,6 +294,22 @@
           </div>
           <div class="hint" id="manualCertHint" style="margin-top:8px"></div>
           <button class="btn ghost sm" id="clearCertBtn" style="display:none">清除手动证书（切回 ACME）</button>
+
+          <div class="section-label" id="certContentLabel" style="display:none">当前生效的证书与私钥</div>
+          <div class="row" id="certContentBox" style="display:none">
+            <div class="field">
+              <label>证书 (PEM)</label>
+              <textarea id="certViewCert" rows="5" readonly tabindex="-1"></textarea>
+            </div>
+            <div class="field">
+              <label>私钥 (PEM)</label>
+              <textarea id="certViewKey" rows="5" readonly tabindex="-1"></textarea>
+            </div>
+          </div>
+          <div class="btn-group" id="certContentBtns" style="display:none">
+            <button class="btn ghost sm" id="copyCertBtn">复制证书</button>
+            <button class="btn ghost sm" id="copyCertKeyBtn">复制私钥</button>
+          </div>
         </div>
 
         <div class="card">
@@ -306,9 +325,15 @@
 
         <div class="card">
           <div class="card-head">
-            <div><h2>数据备份</h2><div class="desc">导出面板数据库（节点、设置、流量统计），升级或迁移前建议先备份</div></div>
-            <button class="btn secondary sm" id="backupBtn">下载备份</button>
+            <div><h2>数据备份</h2><div class="desc">导出/恢复面板数据库（节点、设置、流量统计），升级或迁移前建议先备份；恢复会自动重启面板</div></div>
+            <div class="btn-group">
+              <button class="btn secondary sm" id="backupBtn">下载备份</button>
+              <button class="btn secondary sm" id="backupFileBtn">选择备份文件</button>
+              <button class="btn sm" id="backupRestoreBtn" disabled>导入恢复</button>
+            </div>
           </div>
+          <input type="file" id="backupFileInput" accept=".db,application/octet-stream" class="hidden">
+          <div class="hint" id="backupFileInfo" style="margin-top:6px"></div>
         </div>
 
         <div class="card">

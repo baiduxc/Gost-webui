@@ -26,8 +26,12 @@ var ErrNotFound = errors.New("not found")
 
 // Store 封装 bbolt 数据库。
 type Store struct {
-	db *bolt.DB
+	db   *bolt.DB
+	path string
 }
+
+// Path 返回数据库文件路径（用于备份恢复等运维操作）。
+func (s *Store) Path() string { return s.path }
 
 // Open 打开（不存在则创建）数据库。
 func Open(path string) (*Store, error) {
@@ -47,7 +51,7 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
-	return &Store{db: db}, nil
+	return &Store{db: db, path: path}, nil
 }
 
 // Close 关闭数据库。

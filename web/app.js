@@ -49,6 +49,9 @@ const icon = (name, cls = '') =>
 
 /* ---------------- 状态 ---------------- */
 let state = {
+  siteTitle: 'Gost-WebUI',
+  version: '',
+
   view: 'overview',
   nodes: [],
   overview: null,
@@ -163,9 +166,32 @@ function initTheme() {
 async function init() {
   initTheme();
   renderIcons();
+  loadBrand();
   let sess = null;
   try { sess = await api('api/session'); } catch (e) { sess = null; }
   if (sess && sess.loggedIn) showApp(); else showLogin();
+}
+
+// 左上角 LOGO+标题点击回概览
+document.getElementById('brandBtn').onclick = () => {
+  const link = document.querySelector('.nav a[data-view="overview"]');
+  if (link) link.click();
+};
+
+// loadBrand 读取站点标题（公开接口，登录页同样生效）并应用到左上角与浏览器标题。
+async function loadBrand() {
+  try {
+    const b = await api('api/brand');
+    applyBrand(b.siteTitle || '');
+  } catch (e) { /* 默认标题 */ }
+}
+function applyBrand(title) {
+  const t = (title || '').trim() || 'Gost-WebUI';
+  state.siteTitle = t;
+  const el = $('#brandTitle'); if (el) el.textContent = t;
+  document.title = t;
+  const fv = $('#footerVersion');
+  if (fv) fv.textContent = t + (state.version ? ' v' + String(state.version).replace(/^v/, '') : '');
 }
 
 function showLogin() {
@@ -184,7 +210,7 @@ function showApp() {
     state.versionLoaded = true;
     api('api/system').then(sys => {
       const v = (sys.panel && sys.panel.version) || '';
-      const fv = $('#footerVersion'); if (fv && v) fv.textContent = 'Gost-WebUI v' + String(v).replace(/^v/, '');
+      if (v) { state.version = v; applyBrand(state.siteTitle); }
     }).catch(() => {});
   }
 }
@@ -258,7 +284,7 @@ function renderStatusBar() {
   $('#gostDot').className = 'status-dot ' + (ok ? 'ok' : 'bad');
   $('#gostText').textContent = ok ? `gost 运行中 · PID ${g.pid || '—'}` : (g.running ? 'gost 异常' : 'gost 未运行');
   const hc = $('#hostChip'); if (hc) hc.textContent = state.publicHost || '未检测到地址';
-  $('#brandSub').textContent = `/ ${state.nodes.length} 节点`;
+  const bs = $('#brandSub'); if (bs) bs.textContent = `/ ${state.nodes.length} 节点`;
 }
 
 function renderHostWarn() {
@@ -868,7 +894,10 @@ async function openNodeForm(node) {
       <div class="row">
         <div class="field">
           <label>UUID</label>
-          <input id="f-reality-uuid" type="text" value="${rv('realityUuid')}" placeholder="点击右侧生成">
+          <div class="row tight">
+            <input id="f-reality-uuid" type="text" value="${rv('realityUuid')}" placeholder="点击右侧按钮生成">
+            <button class="btn secondary sm" id="realityUuidBtn" type="button" style="flex:0 0 auto" title="仅生成 UUID">生成</button>
+          </div>
         </div>
         <div class="field">
           <label>Short ID</label>
@@ -1035,6 +1064,14 @@ async function openNodeForm(node) {
       updateModeUI();
     };
   });
+  const ru = $('#realityUuidBtn');
+  if (ru) ru.onclick = async () => {
+    try {
+      const c = await api('api/reality/credential', { method: 'POST' });
+      $('#f-reality-uuid').value = c.uuid;
+      toast('已生成新 UUID');
+    } catch (e) { toast(e.message, 'err'); }
+  };
   const rg = $('#realityGenBtn');
   if (rg) rg.onclick = async () => {
     try {
@@ -1511,6 +1548,7 @@ function renderSystem() {
     $('#sysListen').value = port;
   }
   if (document.activeElement !== $('#sysBasePath')) $('#sysBasePath').value = p.basePath || '';
+  if (document.activeElement !== $('#sysSiteTitle')) $('#sysSiteTitle').value = st.siteTitle || '';
 
   const host = location.host;
   const preview = `${p.basePath || ''}/`;
@@ -1531,7 +1569,8 @@ function renderSystem() {
     <div class="k">最近退出</div><div class="v mono">${esc(proc.lastExit || '—')}</div>`;
   $('#gostPaths').textContent = `${g.bin || ''} · ${g.configFile || ''} · ${g.logFile || ''}`;
 
-  const fv = $('#footerVersion'); if (fv) fv.textContent = 'Gost-WebUI' + (p.version ? ' v' + String(p.version).replace(/^v/, '') : '');
+  if (p.version) state.version = p.version;
+  applyBrand(state.siteTitle);
   $('#aboutInfo').innerHTML = `
     <div class="k">版本</div><div class="v mono">gost-webui ${esc(p.version || '')} (${esc(p.runtimeOS || '')}/${esc(p.runtimeArch || '')})</div>
     <div class="k">主机运行</div><div class="v">${fmtDuration(met.hostUptime)}</div>
@@ -1570,7 +1609,30 @@ function renderSubConfig() {
     ? '已配置手动证书（优先于 ACME）。如需更换，粘贴新的证书与私钥后保存；留空保存不会改动现有证书。'
     : '留空则使用 ACME 自动证书；粘贴证书与私钥并保存后，手动证书将优先于 ACME。';
   $('#clearCertBtn').style.display = sc.hasManualCert ? '' : 'none';
+
+  // 当前生效证书内容只读展示（保存/签发后即时刷新）
+  const has = !!sc.certPEM;
+  $('#certContentLabel').style.display = has ? '' : 'none';
+  $('#certContentBox').style.display = has ? '' : 'none';
+  $('#certContentBtns').style.display = has ? '' : 'none';
+  if (has) {
+    const srcName = sc.certSource === 'manual' ? '手动上传' : sc.certSource === 'acme' ? 'ACME 自动签发' : '';
+    $('#certContentLabel').textContent = '当前生效的证书与私钥' + (srcName ? `（${srcName}）` : '');
+    $('#certViewCert').value = sc.certPEM || '';
+    $('#certViewKey').value = sc.keyPEM || '（ACME 私钥存于服务器证书目录，不在页面展示）';
+  }
 }
+
+// copyCert 复制证书内容区文本到剪贴板
+function copyCertField(id) {
+  const t = $(id).value;
+  if (!t) { toast('内容为空', 'err'); return; }
+  navigator.clipboard.writeText(t).then(() => toast('已复制到剪贴板')).catch(() => {
+    $(id).select(); document.execCommand('copy'); toast('已复制到剪贴板');
+  });
+}
+$('#copyCertBtn').onclick = () => copyCertField('#certViewCert');
+$('#copyCertKeyBtn').onclick = () => copyCertField('#certViewKey');
 
 $('#sysSaveBtn').onclick = async () => {
   try {
@@ -1578,7 +1640,11 @@ $('#sysSaveBtn').onclick = async () => {
       method: 'PUT',
       body: { listen: $('#sysListen').value.trim(), basePath: $('#sysBasePath').value.trim() },
     });
-    toast('已保存，重启面板后生效');
+    // 站点标题走 settings 接口，保存即热生效
+    const title = ($('#sysSiteTitle') && $('#sysSiteTitle').value.trim()) || '';
+    await api('api/settings', { method: 'PUT', body: { siteTitle: title } });
+    applyBrand(title);
+    toast('已保存，重启面板后生效（站点标题即时生效）');
     state.system = null;
     await loadSystem();
     if (r.needRestart && confirm('配置已保存。是否立即重启面板使其生效？')) {
@@ -1599,14 +1665,16 @@ $('#sysRestartBtn').onclick = async () => {
 // 面板重启后轮询恢复
 async function waitReboot() {
   toast('面板正在重启…');
-  const next = location.pathname;
+  const next = location.pathname + location.hash;
   for (let i = 0; i < 60; i++) {
     await new Promise(r => setTimeout(r, 1000));
     try {
       const res = await fetch(BASE + 'api/session', { credentials: 'same-origin', cache: 'no-store' });
       if (res.ok) { toast('面板已重启'); location.href = next; return; }
+      if (res.status === 401) { toast('面板已重启，请重新登录'); location.href = next; return; }
     } catch (e) { /* 等待中 */ }
   }
+  const rb = document.getElementById('backupRestoreBtn'); if (rb) rb.disabled = false;
   toast('重启超时，请手动刷新页面', 'err');
 }
 
@@ -1657,8 +1725,9 @@ $('#saveSubBtn').onclick = async () => {
   const btn = $('#saveSubBtn');
   btn.disabled = true;
   try {
-    state.subConfig = await api('api/sub-config', { method: 'PUT', body });
+    await api('api/sub-config', { method: 'PUT', body });
     $('#subTlsCert').value = ''; $('#subTlsKey').value = '';
+    state.subConfig = await api('api/sub-config');
     toast('已保存，订阅监听器已热更新');
     renderSubConfig();
   } catch (e) { toast(e.message, 'err'); }
@@ -1669,8 +1738,9 @@ $('#saveSubBtn').onclick = async () => {
 $('#clearCertBtn').onclick = async () => {
   if (!confirm('清除手动证书并切回 ACME 自动证书？')) return;
   try {
-    state.subConfig = await api('api/sub-config', { method: 'PUT', body: { tlsCert: '', tlsKey: '' } });
+    await api('api/sub-config', { method: 'PUT', body: { tlsCert: '', tlsKey: '' } });
     $('#subTlsCert').value = ''; $('#subTlsKey').value = '';
+    state.subConfig = await api('api/sub-config');
     toast('已清除手动证书');
     renderSubConfig();
   } catch (e) { toast(e.message, 'err'); }
@@ -1690,8 +1760,8 @@ $('#issueCertBtn').onclick = async () => {
       suffix: $('#subSuffix').value.trim(),
       domain, email,
     } });
-    const r = await api('api/cert/issue', { method: 'POST' });
-    if (r && r.config) state.subConfig = r.config;
+    await api('api/cert/issue', { method: 'POST' });
+    state.subConfig = await api('api/sub-config');
     toast('证书已签发/续期');
     renderSubConfig();
   } catch (e) { toast(e.message, 'err'); }
@@ -1737,6 +1807,33 @@ $('#backupBtn').onclick = async () => {
     toast('备份已下载');
   } catch (e) { toast(e.message, 'err'); }
   finally { btn.disabled = false; }
+};
+
+// 选择备份文件（前端暂存，点击「导入恢复」才上传）
+let restoreFile = null;
+$('#backupFileBtn').onclick = () => $('#backupFileInput').click();
+$('#backupFileInput').onchange = e => {
+  const f = e.target.files && e.target.files[0];
+  restoreFile = f || null;
+  $('#backupRestoreBtn').disabled = !f;
+  $('#backupFileInfo').textContent = f ? `已选择：${f.name}（${(f.size / 1024).toFixed(1)} KB）——点击「导入恢复」上传并自动重启面板` : '';
+};
+$('#backupRestoreBtn').onclick = async () => {
+  if (!restoreFile) { toast('请先选择备份文件', 'err'); return; }
+  if (!confirm(`确认用「${restoreFile.name}」覆盖当前面板数据？\n当前数据库会先另存为 panel.db.pre-restore，面板随后自动重启。`)) return;
+  const btn = $('#backupRestoreBtn');
+  btn.disabled = true;
+  try {
+    const fd = new FormData();
+    fd.append('file', restoreFile);
+    const res = await fetch(BASE + 'api/backup/restore', { method: 'POST', credentials: 'same-origin', body: fd });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) throw new Error((data && data.error) || ('恢复失败 HTTP ' + res.status));
+    toast('恢复成功，面板正在重启…');
+    $('#backupFileInfo').textContent = '';
+    restoreFile = null;
+    waitReboot();
+  } catch (e) { toast(e.message, 'err'); btn.disabled = false; }
 };
 
 $('#gostLogsBtn').onclick = async () => {

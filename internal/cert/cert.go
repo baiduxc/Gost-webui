@@ -242,6 +242,40 @@ func (p *Provider) Status(ctx context.Context) Status {
 	return Status{Mode: "none", Domain: domain}
 }
 
+// Content 返回当前生效证书的 PEM 与私钥（若可得）：手动证书直接回显存储值，
+// ACME 证书从缓存读取。私钥仅在面板 auth 接口下暴露给管理员视图，不出面板。
+func (p *Provider) Content(ctx context.Context) (certPEM string, keyPEM string, source string) {
+	p.mu.Lock()
+	domain, manual, mgr := p.domain, p.manual, p.mgr
+	p.mu.Unlock()
+	if manual != nil {
+		return "", "", "manual"
+	}
+	if mgr != nil && domain != "" {
+		data, err := mgr.Cache.Get(ctx, domain)
+		if err == nil && len(data) > 0 {
+			// autocert 缓存文件为拼接 PEM：证书链 + 私钥，按块拆开回显
+			var certB, keyB []string
+			rest := data
+			for {
+				var block *pem.Block
+				block, rest = pem.Decode(rest)
+				if block == nil {
+					break
+				}
+				pemStr := strings.TrimSpace(string(pem.EncodeToMemory(block)))
+				if strings.Contains(block.Type, "CERTIFICATE") {
+					certB = append(certB, pemStr)
+				} else {
+					keyB = append(keyB, pemStr)
+				}
+			}
+			return strings.Join(certB, "\n"), strings.Join(keyB, "\n"), "acme"
+		}
+	}
+	return "", "", ""
+}
+
 // Close 停止 :80 挑战监听。
 func (p *Provider) Close(ctx context.Context) {
 	p.mu.Lock()

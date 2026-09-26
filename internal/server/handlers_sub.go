@@ -103,6 +103,14 @@ func (s *Server) subConfigView(ctx context.Context) map[string]any {
 		st = prov.Status(ctx)
 	}
 	hasManual := strings.TrimSpace(set.CertPEM) != "" && strings.TrimSpace(set.KeyPEM) != ""
+	// 证书/私钥内容用于前端「证书与私钥」只读展示：手动优先回显存储值，
+	// ACME 则从缓存读取。这些内容仅在需登录的面板接口下返回，不出面板。
+	certPEM, keyPEM, certSource := "", "", ""
+	if hasManual {
+		certPEM, keyPEM, certSource = set.CertPEM, set.KeyPEM, "manual"
+	} else if prov := s.certProvider(); prov != nil {
+		certPEM, keyPEM, certSource = prov.Content(ctx)
+	}
 	return map[string]any{
 		"port":          set.Port,
 		"suffix":        set.Suffix,
@@ -112,6 +120,9 @@ func (s *Server) subConfigView(ctx context.Context) map[string]any {
 		"sampleURL":     s.subBaseURL() + "/<节点令牌>",
 		"hasManualCert": hasManual,
 		"tls":           s.subUseTLS(),
+		"certPEM":       certPEM,
+		"keyPEM":        keyPEM,
+		"certSource":    certSource,
 	}
 }
 

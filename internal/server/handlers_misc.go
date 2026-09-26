@@ -3,6 +3,7 @@ package server
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"sort"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	bolt "go.etcd.io/bbolt"
 	"golang.org/x/crypto/bcrypt"
 
 	"gost-webui/internal/config"
@@ -156,9 +158,11 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 			gostLogLvl = n
 		}
 	}
+	title, _ := s.ctl.Store.GetSetting("site_title")
 	writeJSON(w, http.StatusOK, map[string]any{
 		"publicHost":    s.publicHost(),
 		"configured":    s.configuredHost(),
+		"siteTitle":     title,
 		"sampleSeconds": sample,
 		"retentionDays": retention,
 		"gostLogLevel":  gostLogLvl,
@@ -183,6 +187,7 @@ func (s *Server) configuredHost() string {
 func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		PublicHost    *string `json:"publicHost"`
+		SiteTitle     *string `json:"siteTitle"`
 		SampleSeconds *int    `json:"sampleSeconds"`
 		RetentionDays *int    `json:"retentionDays"`
 		GostLogLevel  *string `json:"gostLogLevel"`
@@ -198,6 +203,17 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := s.ctl.Store.SetSetting("public_host", host); err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	if req.SiteTitle != nil {
+		t := strings.TrimSpace(*req.SiteTitle)
+		if len([]rune(t)) > 40 {
+			writeErr(w, http.StatusBadRequest, "站点标题过长（最多 40 字符）")
+			return
+		}
+		if err := s.ctl.Store.SetSetting("site_title", t); err != nil {
 			writeErr(w, http.StatusInternalServerError, err.Error())
 			return
 		}
@@ -250,6 +266,98 @@ func (s *Server) handleBackup(w http.ResponseWriter, r *http.Request) {
 		// 头已发出，只能记日志
 		s.log.Error("导出备份失败", "err", err)
 	}
+}
+
+// handleBackupRestore 上传备份文件恢复数据库：校验 bbolt 魔数与完整性后，
+// 原子替换 panel.db，然后触发面板重启（旧数据全部让位于备份内容）。
+// handleBrand 公开返回站点标题（登录页也需要显示），无任何敏感信息。
+func (s *Server) handleBrand(w http.ResponseWriter, r *http.Request) {
+	title, _ := s.ctl.Store.GetSetting("site_title")
+	writeJSON(w, http.StatusOK, map[string]any{"siteTitle": title})
+}
+
+func (s *Server) handleBackupRestore(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<20) // 上限 64MB
+	if err := r.ParseMultipartForm(8 << 20); err != nil {
+		writeErr(w, http.StatusBadRequest, "上传解析失败: "+err.Error())
+		return
+	}
+	file, _, err := r.FormFile("file")
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "未收到备份文件")
+		return
+	}
+	defer file.Close()
+
+	data, err := io.ReadAll(file)
+	if err != nil || len(data) < 64 {
+		writeErr(w, http.StatusBadRequest, "备份文件读取失败或过小")
+		return
+	}
+	// bbolt 页头校验：page 0 的 magic/digest/free/... 至少要求文件大小为页大小倍数（默认 4096）
+	if len(data)%4096 != 0 {
+		writeErr(w, http.StatusBadRequest, "备份文件格式不正确（非面板数据库）")
+		return
+	}
+	// 用临时库打开验证完整性并读出 meta bucket 数量，确认是面板自己的库
+	tmp, err := os.CreateTemp("", "panel-restore-*.db")
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	tmp.Close()
+	check, err := bolt.Open(tmpName, 0o600, &bolt.Options{ReadOnly: true, Timeout: 5 * time.Second})
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "备份文件校验失败（可能损坏）: "+err.Error())
+		return
+	}
+	var metaOK bool
+	_ = check.View(func(tx *bolt.Tx) error {
+		if b := tx.Bucket([]byte("meta")); b != nil {
+			metaOK = true
+		}
+		return nil
+	})
+	check.Close()
+	if !metaOK {
+		writeErr(w, http.StatusBadRequest, "备份文件不包含面板数据（meta 桶缺失）")
+		return
+	}
+
+	target := s.ctl.Store.Path()
+	bak := target + ".pre-restore"
+	// 先把当前库另存一份，出问题还能人工换回
+	if err := os.Rename(target, bak); err != nil {
+		writeErr(w, http.StatusInternalServerError, "备份当前数据库失败: "+err.Error())
+		return
+	}
+	tmpFinal := target + ".restore-tmp"
+	if err := os.WriteFile(tmpFinal, data, 0o600); err != nil {
+		_ = os.Rename(bak, target)
+		writeErr(w, http.StatusInternalServerError, "写入恢复文件失败: "+err.Error())
+		return
+	}
+	if err := os.Rename(tmpFinal, target); err != nil {
+		_ = os.Rename(bak, target)
+		writeErr(w, http.StatusInternalServerError, "替换数据库失败: "+err.Error())
+		return
+	}
+	s.log.Warn("已从备份恢复数据库，即将自动重启面板", "backup", bak)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "msg": "恢复成功，面板即将重启", "restartIn": 800})
+	go func() {
+		time.Sleep(800 * time.Millisecond)
+		fn := s.restartFn
+		if fn != nil {
+			fn()
+		}
+	}()
 }
 
 func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
