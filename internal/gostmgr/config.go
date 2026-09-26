@@ -146,7 +146,7 @@ func BuildConfig(nodes []*model.Node, opts BuildOptions) *Config {
 	}
 
 	for _, n := range nodes {
-		if n == nil || !n.Enabled {
+		if n == nil || !n.Enabled || n.IsReality() {
 			continue
 		}
 		var quotas []string

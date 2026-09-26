@@ -1,5 +1,14 @@
 # 更新记录
 
+## 1.8.0
+
+- 新增：**VLESS + REALITY 节点**（sing-box 引擎），与 gost 并存互不影响
+  - 添加节点新增「VLESS + REALITY」标签页：伪装域名 + 一键生成密钥对/UUID/ShortID
+  - 每个节点由独立 sing-box 实例承载（进程级精确流量统计），开关/删除即时拉起/回收
+  - 支持每日/每月/总量配额：超限自动停实例，恢复周期自动拉起（限速与并发暂不支持）
+  - 订阅同时输出 vless://reality 链接与 Clash Meta 配置，兼容 v2rayN / NekoBox / Shadowrocket
+  - 未安装 sing-box 的服务器不显示该标签页；install.sh 与 Docker 镜像自动附带 sing-box
+
 ## 1.7.2
 
 - 修复：「客户端连接」通知刷屏——旧逻辑按 gost 累计连接数增量发送且未走冷却去重，任何 TCP 短连接（心跳/探测/重连）都会触发推送。

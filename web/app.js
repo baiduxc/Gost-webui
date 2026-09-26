@@ -562,7 +562,7 @@ function renderNodes() {
   wrap.innerHTML = `<table>
     <thead><tr><th>节点名称 / 落地机</th><th>监听端口</th><th>本月用量 / 配额</th><th>状态</th><th class="right">操作</th></tr></thead>
     <tbody>${nodes.map(n => `<tr>
-      <td><button class="node-select" data-act="detail" data-id="${esc(n.id)}" aria-label="查看${esc(n.name)}详情">${icon('server')}<span><b>${esc(n.name)}</b><small>${esc(n.protocol || 'TCP')}${n.mode === 'gost' ? ' · GOST' : ''}${n.udp ? ' · TCP+UDP' : ''} / ${n.mode === 'gost' && n.gostLocal ? '本机落地' : `${esc(n.targetHost)}:${n.targetPort}`}</small></span></button></td>
+      <td><button class="node-select" data-act="detail" data-id="${esc(n.id)}" aria-label="查看${esc(n.name)}详情">${icon('server')}<span><b>${esc(n.name)}</b><small>${esc(n.protocol || 'TCP')}${n.mode === 'gost' ? ' · GOST' : ''}${n.udp ? ' · TCP+UDP' : ''} / ${n.mode === 'reality' ? '本机 sing-box' : (n.mode === 'gost' && n.gostLocal ? '本机落地' : `${esc(n.targetHost)}:${n.targetPort}`)}</small></span></button></td>
       <td class="mono">${n.listenPort}</td>
       <td class="node-quota"><span class="mono">${fmtBytes((n.monthIn || 0) + (n.monthOut || 0))}</span>${quotaCell(n)}</td>
       <td class="node-status-cell">${nodeStatusCell(n)}</td>
@@ -747,12 +747,18 @@ const GOST_TRANSPORTS = [
 const gostProtocol = value => GOST_PROTOCOLS.find(x => x.value === value) || GOST_PROTOCOLS[5];
 const gostTransport = value => GOST_TRANSPORTS.find(x => x.value === value) || GOST_TRANSPORTS[0];
 
-function openNodeForm(node) {
+async function openNodeForm(node) {
+  if (state.realityAvailable === undefined) {
+    try { state.realityAvailable = (await api('api/reality/available')).available; }
+    catch (e) { state.realityAvailable = false; }
+  }
   const isEdit = !!node;
   const q = (node && node.quota) || { enabled: false, period: 'monthly', bytes: 0, direction: 'total' };
   const rate = (node && node.rate) || { enabled: false, inBps: 0, outBps: 0 };
   const isGost = !!(node && node.mode === 'gost');
-  const initMode = isGost ? 'gost' : 'link';
+  const isReality = !!(node && node.mode === 'reality');
+  const initMode = isReality ? 'reality' : (isGost ? 'gost' : 'link');
+  const rv = (v) => esc(isReality && node ? (node[v] || '') : '');
   const gp = (isGost && node.gostProtocol) || 'ss';
   const gt = (isGost && node.gostTransport) || gostProtocol(gp).transport;
   const gl = isGost ? !!node.gostLocal : true;
@@ -767,7 +773,8 @@ function openNodeForm(node) {
 
     <div class="tabs" id="nodeModeTabs" style="margin-bottom:16px">
       <button type="button" data-mode="link" class="${initMode === 'link' ? 'active' : ''}">粘贴链接</button>
-      <button type="button" data-mode="gost" class="${initMode === 'gost' ? 'active' : ''}">GOST 体系</button>
+      <button type="button" data-mode="gost" class="${initMode === 'gost' ? 'active' : ''}">GOST 体系</button>${state.realityAvailable || isReality ? `
+      <button type="button" data-mode="reality" class="${initMode === 'reality' ? 'active' : ''}">VLESS + REALITY</button>` : ''}
     </div>
 
     <div id="modeLink" class="${initMode === 'link' ? '' : 'hidden'}">
@@ -851,6 +858,35 @@ function openNodeForm(node) {
       <div class="notice" id="gostComboHint"></div>
     </div>
 
+    <div id="modeReality" class="${initMode === 'reality' ? '' : 'hidden'}">
+      <div class="notice">REALITY 由本机 sing-box 进程承载：伪装成目标网站 TLS 握手，无证书、抗探测。监听端口即客户端连接端口。</div>
+      <div class="field">
+        <label>伪装域名（SNI / 握手目标）</label>
+        <input id="f-reality-sni" type="text" value="${rv('realitySni')}" placeholder="如 www.microsoft.com（必须支持 TLS1.3，客户端 SNI 与伪装目标一致）">
+        <div class="hint">建议使用大型站点（微软/苹果/亚马逊等），不要用被墙的域名</div>
+      </div>
+      <div class="row">
+        <div class="field">
+          <label>UUID</label>
+          <input id="f-reality-uuid" type="text" value="${rv('realityUuid')}" placeholder="点击右侧生成">
+        </div>
+        <div class="field">
+          <label>Short ID</label>
+          <input id="f-reality-sid" type="text" value="${rv('realityShortId')}" placeholder="8 位 hex">
+        </div>
+      </div>
+      <div class="field">
+        <label>REALITY 密钥对</label>
+        <input id="f-reality-pub" type="text" value="${rv('realityPub')}" placeholder="公钥（pbk，下发给客户端）" readonly>
+        <input id="f-reality-priv" type="hidden" value="${rv('realityPriv')}">
+        <div class="btn-group" style="margin-top:8px">
+          <button class="btn secondary sm" id="realityGenBtn" type="button">生成密钥对 / UUID / ShortID</button>
+          <span class="hint" id="realityGenHint" style="margin:0">${isReality ? '编辑时留空表示保留现有凭据' : ''}</span>
+        </div>
+      </div>
+      <div class="hint" style="margin-top:4px">REALITY 节点支持流量统计与配额（超限自动停实例、恢复周期自动拉起）；限速与并发限制暂不支持。</div>
+    </div>
+
     <div class="row">
       <div class="field">
         <label>监听端口</label>
@@ -912,6 +948,7 @@ function openNodeForm(node) {
       </div>
     </div>
 
+    <div id="rateConnSection">
     <div class="section-label">限速与连接数</div>
     <div class="field">
       <label class="switch"><input type="checkbox" id="f-rate" ${rate.enabled ? 'checked' : ''}><span class="track"></span>
@@ -926,6 +963,7 @@ function openNodeForm(node) {
     <div class="field">
       <label>最大并发连接数（0 表示不限）</label>
       <input id="f-connLimit" type="number" min="0" value="${node ? node.connLimit || 0 : 0}">
+    </div>
     </div>
 
     <div class="modal-actions">
@@ -970,9 +1008,16 @@ function openNodeForm(node) {
   };
   const updateModeUI = () => {
     const mode = $('#nodeModeTabs button.active')?.dataset.mode || 'link';
+    if (mode === 'reality') {
+      $('#udpField').classList.add('hidden');
+      $('#rateConnSection').classList.add('hidden');
+      return;
+    }
+    $('#rateConnSection').classList.remove('hidden');
     if (mode === 'gost') {
       updateGostFields(false);
     } else {
+      $('#udpField').classList.remove('hidden');
       $('#udpField').classList.remove('hidden');
       $('#udpTitle').textContent = '同时转发 UDP';
       $('#udpDesc').textContent = 'hysteria2 / tuic / KCP / QUIC 等协议必须开启';
@@ -985,10 +1030,22 @@ function openNodeForm(node) {
       const isLink = mode === 'link';
       $('#modeLink').classList.toggle('hidden', !isLink);
       $('#advOverride').classList.toggle('hidden', !isLink);
-      $('#modeGost').classList.toggle('hidden', isLink);
+      $('#modeGost').classList.toggle('hidden', mode !== 'gost');
+      const mr = $('#modeReality'); if (mr) mr.classList.toggle('hidden', mode !== 'reality');
       updateModeUI();
     };
   });
+  const rg = $('#realityGenBtn');
+  if (rg) rg.onclick = async () => {
+    try {
+      const c = await api('api/reality/credential', { method: 'POST' });
+      $('#f-reality-uuid').value = c.uuid;
+      $('#f-reality-sid').value = c.shortId;
+      $('#f-reality-pub').value = c.pubKey;
+      $('#f-reality-priv').value = c.privKey;
+      $('#realityGenHint').textContent = '已生成，保存前请勿再次点击（会更换全部凭据）';
+    } catch (e) { toast(e.message, 'err'); }
+  };
   $('#f-gost-location').onchange = () => updateGostFields(false);
   $('#f-gost-protocol').onchange = () => updateGostFields(true);
   $('#f-gost-transport').onchange = () => updateGostFields(false);
@@ -1109,6 +1166,18 @@ async function saveNode(node) {
       gostPassword: ['ss', 'ssu'].includes(proto) ? $('#f-gost-ss-pass').value.trim() : $('#f-gost-pass').value.trim(),
       gostPath: $('#f-gost-path').value.trim(),
     }, common);
+  } else if (mode === 'reality') {
+    const sni = $('#f-reality-sni').value.trim();
+    if (!sni) { toast('请填写伪装域名', 'err'); return; }
+    body = Object.assign({
+      mode: 'reality',
+      udp: false,
+      realitySni: sni,
+      realityUuid: $('#f-reality-uuid').value.trim(),
+      realityShortId: $('#f-reality-sid').value.trim(),
+      realityPub: $('#f-reality-pub').value.trim(),
+      realityPriv: $('#f-reality-priv').value.trim(),
+    }, Object.assign({}, common, { udp: false }));
   } else {
     const link = $('#f-link').value.trim();
     if (!link) { toast('请填写落地机链接', 'err'); return; }
@@ -1250,7 +1319,7 @@ async function openDetail(node) {
     body.innerHTML = `
       <div class="kv" style="margin-bottom:24px">
         <div class="k">状态</div><div class="v">${statusTag(node.enabled, live.quotaBlocked)}</div>
-        <div class="k">落地机</div><div class="v mono">${node.mode === 'gost' && node.gostLocal ? '本机直出' : `${esc(node.targetHost)}:${node.targetPort}`} · ${esc(node.protocol)}</div>
+        <div class="k">落地机</div><div class="v mono">${node.mode === 'reality' ? '本机 sing-box（REALITY）' : (node.mode === 'gost' && node.gostLocal ? '本机直出' : `${esc(node.targetHost)}:${node.targetPort}`)} · ${esc(node.protocol)}</div>
         <div class="k">监听端口</div><div class="v mono">${node.listenPort}${node.udp ? ' · 附加 UDP' : ''}</div>
         <div class="k">连接数</div><div class="v">当前 ${live.currentConns || 0} · 累计 ${live.totalConns || 0}</div>
         <div class="k">今日流量</div><div class="v mono">↑ ${fmtBytes(node.todayIn)} / ↓ ${fmtBytes(node.todayOut)}</div>

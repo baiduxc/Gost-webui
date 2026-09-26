@@ -13,6 +13,14 @@ import (
 )
 
 // Gost 描述被管理的 gost 进程。
+// SingBox 描述 VLESS+REALITY 引擎（sing-box 二进制）。
+type SingBox struct {
+	// Bin 是 sing-box 可执行文件路径。
+	Bin string `yaml:"bin"`
+	// Dir 是每个 reality 节点实例的目录（配置+日志）。
+	Dir string `yaml:"dir"`
+}
+
 type Gost struct {
 	// Bin 是 gost 可执行文件路径。
 	Bin string `yaml:"bin"`
@@ -61,9 +69,10 @@ type Config struct {
 	// RetentionDays 流量明细保留天数。
 	RetentionDays int `yaml:"retention_days"`
 	// CacheDir 编译缓存等（预留）。
-	Admin  Admin  `yaml:"admin"`
-	Gost   Gost   `yaml:"gost"`
-	Notify Notify `yaml:"notify"`
+	Admin   Admin   `yaml:"admin"`
+	Gost    Gost    `yaml:"gost"`
+	SingBox SingBox `yaml:"singbox"`
+	Notify  Notify  `yaml:"notify"`
 }
 
 // Default 返回默认配置。
@@ -79,6 +88,10 @@ func Default() *Config {
 		Notify: Notify{
 			APIBase:  "https://api.telegram.org",
 			Cooldown: 600,
+		},
+		SingBox: SingBox{
+			Bin: "/opt/gost-webui/bin/sing-box",
+			Dir: "/opt/gost-webui/singbox",
 		},
 		Gost: Gost{
 			Bin:        "/opt/gost-webui/bin/gost",
@@ -145,6 +158,12 @@ func applyDefaults(c *Config) {
 	}
 	if c.Admin.Username == "" {
 		c.Admin.Username = d.Admin.Username
+	}
+	if c.SingBox.Bin == "" {
+		c.SingBox.Bin = d.SingBox.Bin
+	}
+	if c.SingBox.Dir == "" {
+		c.SingBox.Dir = filepath.Join(c.DataDir, "singbox")
 	}
 	if c.Gost.Bin == "" {
 		c.Gost.Bin = d.Gost.Bin

@@ -18,18 +18,18 @@ type Metrics struct {
 	Load15     float64 `json:"load15"`
 	CPUPercent float64 `json:"cpuPercent"`
 
-	MemTotal     uint64  `json:"memTotal"`
-	MemUsed      uint64  `json:"memUsed"`
-	MemPercent   float64 `json:"memPercent"`
-	SwapTotal    uint64  `json:"swapTotal"`
-	SwapUsed     uint64  `json:"swapUsed"`
-	SwapPercent  float64 `json:"swapPercent"`
-	DiskTotal    uint64  `json:"diskTotal"`
-	DiskUsed     uint64  `json:"diskUsed"`
-	DiskPercent  float64 `json:"diskPercent"`
-	HostUptime   int64   `json:"hostUptime"`
-	RuntimeOS    string  `json:"os"`
-	RuntimeArch  string  `json:"arch"`
+	MemTotal    uint64  `json:"memTotal"`
+	MemUsed     uint64  `json:"memUsed"`
+	MemPercent  float64 `json:"memPercent"`
+	SwapTotal   uint64  `json:"swapTotal"`
+	SwapUsed    uint64  `json:"swapUsed"`
+	SwapPercent float64 `json:"swapPercent"`
+	DiskTotal   uint64  `json:"diskTotal"`
+	DiskUsed    uint64  `json:"diskUsed"`
+	DiskPercent float64 `json:"diskPercent"`
+	HostUptime  int64   `json:"hostUptime"`
+	RuntimeOS   string  `json:"os"`
+	RuntimeArch string  `json:"arch"`
 }
 
 // Read 采集当前指标（读取失败时对应字段为 0）。

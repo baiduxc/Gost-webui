@@ -26,10 +26,11 @@ import (
 	"gost-webui/internal/gostmgr"
 	"gost-webui/internal/notify"
 	"gost-webui/internal/server"
+	"gost-webui/internal/singbox"
 	"gost-webui/internal/store"
 )
 
-var version = "1.7.2"
+var version = "1.8.0"
 
 //go:embed all:web
 var embeddedWeb embed.FS
@@ -149,6 +150,8 @@ func main() {
 		}
 	}
 
+	sbPool := singbox.NewPool(cfg.SingBox.Dir, cfg.SingBox.Bin, logger)
+
 	ctl := controller.New(st, mgr, logger, controller.Options{
 		APIAddr:   cfg.Gost.APIAddr,
 		APIUser:   cfg.Gost.APIUser,
@@ -156,6 +159,7 @@ func main() {
 		QuotaFile: filepath.Join(cfg.DataDir, "quota.json"),
 		LogLevel:  gostLogLevel,
 	})
+	ctl.SB = sbPool
 	ctl.SampleSeconds = sampleSeconds
 	ctl.RetentionDays = retentionDays
 
@@ -230,6 +234,7 @@ func main() {
 	certProv.Close(shutdownCtx)
 	// 退出前最后采样一次，避免丢失最后一段流量（配额计数恢复依赖面板统计）
 	ctl.SampleOnce(shutdownCtx)
+	sbPool.StopAll()
 	alertMgr.NotifyPanelStop(shutdownCtx)
 	mgr.Stop()
 }

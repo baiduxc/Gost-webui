@@ -20,6 +20,10 @@ admin:
   username: "${ADMIN_USER:-admin}"
   password: "PENDING-ROTATE"
 
+singbox:
+  bin: "/usr/local/bin/sing-box"
+  dir: "/var/lib/gost-webui/singbox"
+
 gost:
   bin: "/usr/local/bin/gost"
   config_file: "/etc/gost-webui/gost.yml"

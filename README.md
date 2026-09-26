@@ -14,6 +14,7 @@
 - **一键安装**：自动安装 Go、gost、面板，并注册 systemd 服务
 - **粘贴即用**：支持 `vmess://` `vless://` `trojan://` `ss://` `hysteria2://` `tuic://`，
   自动解析参数、自动补 SNI/Host、UDP 协议自动开启 UDP 转发，并生成新链接与二维码
+- **VLESS + REALITY**：添加节点选择「VLESS + REALITY」，面板自动拉起 sing-box 引擎：伪装域名握手、免证书、抗探测；一键生成密钥对/UUID/ShortID，订阅同时输出 `vless://…security=reality` 与 Clash Meta 配置（与 gost 节点并存）
 - **本机也能落地**：添加节点时选择「GOST 体系 → 本机」，HTTP、SOCKS、SS、Relay、SNI 服务直接加入面板管理的 GOST 进程
 - **完整 GOST 协议层**：代理协议与传输通道独立选择，覆盖 TCP/UDP、TLS/DTLS、WS、HTTP/2、gRPC、KCP、QUIC、HTTP/3、WebTransport、SSH、ICMP 等官方通道
 - **流量统计**：今日 / 本月 / 累计流量、连接数、节点流量曲线

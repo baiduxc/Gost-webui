@@ -5,6 +5,7 @@ package controller
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strconv"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"gost-webui/internal/alerts"
 	"gost-webui/internal/gostmgr"
 	"gost-webui/internal/model"
+	"gost-webui/internal/singbox"
 	"gost-webui/internal/store"
 )
 
@@ -30,6 +32,7 @@ type Options struct {
 type Controller struct {
 	Store  *store.Store
 	Gost   *gostmgr.Manager
+	SB     *singbox.Pool // VLESS+REALITY 引擎（可为 nil）
 	Log    *slog.Logger
 	Opts   Options
 	Alerts *alerts.Manager
@@ -57,7 +60,7 @@ func New(st *store.Store, mgr *gostmgr.Manager, log *slog.Logger, opts Options) 
 
 func (c *Controller) client() *gostmgr.Client { return c.Gost.Client() }
 
-// Bootstrap 根据数据库中的节点生成配置文件并启动 gost。
+// Bootstrap 根据数据库中的节点生成配置文件并启动 gost 与 sing-box。
 func (c *Controller) Bootstrap(ctx context.Context) error {
 	if err := c.SyncConfigFile(); err != nil {
 		return err
@@ -65,6 +68,7 @@ func (c *Controller) Bootstrap(ctx context.Context) error {
 	if _, err := c.LoadNodes(); err != nil {
 		return err
 	}
+	c.syncReality(ctx)
 	// gost 每次（重新）启动后，等待 API 就绪并校正配额计数
 	c.Gost.SetOnStarted(func() {
 		rctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -139,8 +143,11 @@ func (c *Controller) SyncConfigFile() error {
 	return c.Gost.WriteConfig(cfg)
 }
 
-// ApplyNode 将节点同步到 gost（服务 + 配额 + 限速）。
+// ApplyNode 将节点同步到底层引擎（gost 服务/配额/限速，或 sing-box 实例）。
 func (c *Controller) ApplyNode(ctx context.Context, n *model.Node) error {
+	if n.IsReality() {
+		return c.applyReality(ctx, n)
+	}
 	cfg := gostmgr.BuildConfig([]*model.Node{n}, gostmgr.BuildOptions{
 		APIAddr:   c.Opts.APIAddr,
 		APIUser:   c.Opts.APIUser,
@@ -218,8 +225,14 @@ func (c *Controller) ApplyNode(ctx context.Context, n *model.Node) error {
 	return c.SyncConfigFile()
 }
 
-// RemoveNode 从 gost 中删除节点相关资源。
+// RemoveNode 从引擎中删除节点相关资源。
 func (c *Controller) RemoveNode(ctx context.Context, n *model.Node) error {
+	if n.IsReality() {
+		if c.SB != nil {
+			c.SB.Remove(n.ID)
+		}
+		return nil
+	}
 	cl := c.client()
 	var firstErr error
 	keep := func(err error) {
@@ -251,7 +264,7 @@ func (c *Controller) Reconcile(ctx context.Context) error {
 		index[q.Name] = q
 	}
 	for _, n := range c.Nodes() {
-		if !n.Enabled || !n.Quota.Enabled || n.Quota.Bytes <= 0 {
+		if n.IsReality() || !n.Enabled || !n.Quota.Enabled || n.Quota.Bytes <= 0 {
 			continue
 		}
 		name := model.QuotaName(n.ID)
@@ -363,4 +376,43 @@ func (c *Controller) ResetNodeTraffic(ctx context.Context, n *model.Node) error 
 
 func formatLimit(b int64) string {
 	return strconv.FormatInt(b, 10) + "B"
+}
+
+// ---------- VLESS+REALITY 引擎 ----------
+
+func (c *Controller) applyReality(ctx context.Context, n *model.Node) error {
+	if c.SB == nil {
+		return fmt.Errorf("面板未启用 sing-box 引擎")
+	}
+	cred := &singbox.RealityCred{
+		UUID:       n.RealityUUID,
+		PrivateKey: n.RealityPriv,
+		PublicKey:  n.RealityPub,
+		ShortID:    n.RealityShortID,
+		ServerName: n.RealitySNI,
+	}
+	return c.SB.Apply(ctx, n.ID, n.ListenPort, cred, n.Enabled)
+}
+
+// syncReality 根据当前节点列表拉起/清理 sing-box 实例。
+func (c *Controller) syncReality(ctx context.Context) {
+	if c.SB == nil {
+		return
+	}
+	for _, n := range c.Nodes() {
+		if !n.IsReality() {
+			continue
+		}
+		if err := c.applyReality(ctx, n); err != nil {
+			c.Log.Warn("同步 reality 节点失败", "node", n.Name, "err", err)
+		}
+	}
+}
+
+// SyncReality 对外暴露（供 handler 在批量操作后调用）。
+func (c *Controller) SyncReality(ctx context.Context) { c.syncReality(ctx) }
+
+// RealityAvailable 报告 sing-box 引擎是否可用。
+func (c *Controller) RealityAvailable() bool {
+	return c.SB != nil && c.SB.RealityInstalled()
 }

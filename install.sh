@@ -47,6 +47,10 @@ gh_url() {
   fi
 }
 GOST_REPO="${GOST_REPO:-https://github.com/go-gost/gost}"
+# sing-box（VLESS+REALITY 引擎）
+SINGBOX_REPO="${SINGBOX_REPO:-https://github.com/SagerNet/sing-box}"
+SINGBOX_VERSION="${SINGBOX_VERSION:-1.14.2}"
+SINGBOX_BIN="${PANEL_DIR}/bin/sing-box"
 GOST_REF="${GOST_REF:-master}"
 GO_VERSION="${GO_VERSION:-1.26.8}"
 # 发布前请把下面这行改成你自己的仓库地址（curl 一键安装时会从这里拉取源码）
@@ -315,6 +319,28 @@ try_release_gost() {
   return 1
 }
 
+# ---------- 安装 sing-box（VLESS+REALITY 引擎，失败不阻塞） ----------
+install_singbox() {
+  local ver url tmp
+  ver="$SINGBOX_VERSION"
+  tmp="/tmp/sing-box_${ver}.tar.gz"
+  url="$(gh_url "https://github.com/SagerNet/sing-box/releases/download/v${ver}/sing-box-${ver}-linux-${GOARCH}.tar.gz")"
+  info "下载 sing-box v${ver}（VLESS+REALITY 引擎）…"
+  echo "    $url"
+  if curl -fSL --progress-bar --retry 2 --connect-timeout 15 -o "$tmp" "$url"; then
+    if tar -xzf "$tmp" -C /tmp "sing-box-${ver}-linux-${GOARCH}/sing-box" 2>/dev/null; then
+      mv "/tmp/sing-box-${ver}-linux-${GOARCH}/sing-box" "$SINGBOX_BIN"
+      chmod +x "$SINGBOX_BIN"
+      rm -f "$tmp" "/tmp/sing-box-${ver}-linux-${GOARCH}" -r
+      ok "sing-box 安装完成：$SINGBOX_BIN"
+      return 0
+    fi
+  fi
+  rm -f "$tmp"
+  warn "sing-box 下载失败，VLESS+REALITY 节点暂不可用；可稍后手动安装到 $SINGBOX_BIN"
+  return 0
+}
+
 # ---------- 安装面板 ----------
 build_panel() {
   local src="$1"
@@ -561,6 +587,11 @@ retention_days: 90
 admin:
   username: "${PANEL_USER}"
   password: "${PANEL_PASS}"
+
+# VLESS+REALITY 引擎（可选；二进制存在即启用）
+singbox:
+  bin: "${PANEL_DIR}/bin/sing-box"
+  dir: "${PANEL_DIR}/singbox"
 
 gost:
   bin: "${PANEL_DIR}/bin/gost"
@@ -928,6 +959,7 @@ main() {
   echo "===================== ${ORG_NAME} 安装程序 ====================="
   interactive_config
   install_gost
+  install_singbox
   install_panel
   write_config
   install_systemd

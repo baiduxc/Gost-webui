@@ -57,6 +57,16 @@ type Node struct {
 	// GostPath 是 WebSocket / gRPC 等通道的服务路径。
 	GostPath string `json:"gostPath,omitempty"`
 
+	// ---- VLESS+REALITY 节点（Mode=="reality"，由 sing-box 引擎承载）----
+	// RealityUUID 是客户端 UUID；RealityPriv/RealityPub 是服务端密钥对（base64url）。
+	// RealityShortID 为 8 位 hex；RealitySNI 是伪装域名（同时作为 handshake 目标）。
+	RealityUUID string `json:"realityUuid,omitempty"`
+	// 注意：列表/详情接口在 buildView 中剥离此字段，仅存储层保留。
+	RealityPriv    string `json:"realityPriv,omitempty"`
+	RealityPub     string `json:"realityPub,omitempty"`
+	RealityShortID string `json:"realityShortId,omitempty"`
+	RealitySNI     string `json:"realitySni,omitempty"`
+
 	Quota QuotaSpec `json:"quota"`
 	Rate  RateSpec  `json:"rate"`
 	// ConnLimit 是并发连接数限制，0 表示不限。
@@ -73,7 +83,13 @@ type Node struct {
 }
 
 // ServiceNames 返回该节点在 gost 中对应的服务名。
+// IsReality 判断节点是否由 sing-box 引擎承载。
+func (n *Node) IsReality() bool { return n.Mode == "reality" }
+
 func (n *Node) ServiceNames() []string {
+	if n.IsReality() {
+		return nil
+	}
 	names := []string{TCPName(n.ID)}
 	// GOST 本机落地只有 Shadowsocks 的 UDP 扩展会生成第二个服务；
 	// 远程中转和普通链接仍按 UDP 开关生成第二个透传服务。

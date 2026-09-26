@@ -15,6 +15,7 @@ import (
 	"gost-webui/internal/gostmgr"
 	"gost-webui/internal/link"
 	"gost-webui/internal/model"
+	"gost-webui/internal/singbox"
 )
 
 // nodeInput 是新增/编辑节点的请求体。
@@ -37,7 +38,13 @@ type nodeInput struct {
 	GostCipher    string `json:"gostCipher"`
 	GostPassword  string `json:"gostPassword"`
 	GostPath      string `json:"gostPath"`
-	Quota         *struct {
+	// Reality 专用
+	RealityUuid    string `json:"realityUuid"`
+	RealityPriv    string `json:"realityPriv"`
+	RealityPub     string `json:"realityPub"`
+	RealityShortId string `json:"realityShortId"`
+	RealitySni     string `json:"realitySni"`
+	Quota          *struct {
 		Enabled   bool   `json:"enabled"`
 		Period    string `json:"period"`
 		Bytes     int64  `json:"bytes"`
@@ -141,7 +148,10 @@ func parseIPFromBody(body string) string {
 }
 
 func (s *Server) buildView(n *model.Node) *nodeView {
-	v := &nodeView{Node: n, Live: s.ctl.Live(n.ID)}
+	// API 输出副本：剥离 REALITY 私钥，避免下发到前端；缓存节点保持不变。
+	public := *n
+	public.RealityPriv = ""
+	v := &nodeView{Node: &public, Live: s.ctl.Live(n.ID)}
 	if n.Mode != "gost" {
 		if info, err := link.Parse(n.LandingLink); err == nil {
 			v.Landing = info
@@ -175,6 +185,13 @@ func (s *Server) buildView(n *model.Node) *nodeView {
 
 // nodeClientURL 生成客户端实际连接本机监听端口的地址。
 func (s *Server) nodeClientURL(n *model.Node, host string) (string, *link.Info, error) {
+	if n.IsReality() {
+		cred := &singbox.RealityCred{
+			UUID: n.RealityUUID, PublicKey: n.RealityPub,
+			ShortID: n.RealityShortID, ServerName: n.RealitySNI,
+		}
+		return singbox.ClientURL(cred, n.ListenPort, host, n.Name), nil, nil
+	}
 	if n.Mode == "gost" {
 		out, err := gostmgr.GostClientURL(n, host, n.ListenPort)
 		return out, nil, err
@@ -520,6 +537,8 @@ func (s *Server) buildNode(in *nodeInput, old *model.Node) (*model.Node, error) 
 	switch mode {
 	case "gost":
 		return s.buildGostNode(in, old)
+	case "reality":
+		return s.buildRealityNode(in, old)
 	case "link":
 		return s.buildLinkNode(in, old)
 	default:

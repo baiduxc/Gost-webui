@@ -14,6 +14,7 @@ import (
 	"gost-webui/internal/gostmgr"
 	"gost-webui/internal/link"
 	"gost-webui/internal/model"
+	"gost-webui/internal/singbox"
 )
 
 // Result 是一次订阅生成的结果。
@@ -28,6 +29,13 @@ type Result struct {
 
 // clientLink 解析并改写单个节点的落地链接，返回指向中转机的链接与解析结果。
 func clientLink(n *model.Node, host string) (string, *link.Info, error) {
+	if n.IsReality() {
+		cred := &singbox.RealityCred{
+			UUID: n.RealityUUID, PublicKey: n.RealityPub,
+			ShortID: n.RealityShortID, ServerName: n.RealitySNI,
+		}
+		return singbox.ClientURL(cred, n.ListenPort, host, n.Name), nil, nil
+	}
 	if n.Mode == "gost" {
 		out, err := gostmgr.GostClientURL(n, host, n.ListenPort)
 		if err != nil {
