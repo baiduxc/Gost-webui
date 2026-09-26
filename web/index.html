@@ -47,9 +47,10 @@
         <button class="btn ghost sm" id="themeBtn" title="切换主题"><span data-icon="moon"></span></button>
         <button class="btn ghost sm" id="refreshBtn" title="刷新"><span data-icon="refresh"></span></button>
         <div class="dropdown" id="userDropdown">
-          <button class="btn ghost sm dropdown-toggle" id="userBtn" aria-expanded="false" title="账户"><span data-icon="user"></span><span id="userBtnName">账户</span><span data-icon="chevron"></span></button>
-          <div class="dropdown-menu">
+          <button class="btn ghost sm" id="userBtn" aria-expanded="false" title="账户菜单"><span id="userBtnName">账户</span></button>
+          <div class="dropdown-menu" id="userMenu">
             <button id="userPwBtn"><span data-icon="key"></span>修改密码</button>
+            <button id="userAboutBtn"><span data-icon="info"></span>关于</button>
             <button id="logoutBtn" class="danger"><span data-icon="logout"></span>退出登录</button>
           </div>
         </div>
@@ -331,10 +332,6 @@
           <div class="hint" id="backupFileInfo" style="margin-top:6px"></div>
         </div>
 
-        <div class="card">
-          <div class="card-head"><div><h2>关于</h2></div></div>
-          <div class="kv" id="aboutInfo"></div>
-        </div>
       </section>
     </div>
     <footer class="app-footer"><span id="footerVersion">Gost-WebUI</span>    <div class="footer-status">

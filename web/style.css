@@ -554,10 +554,9 @@ body > .dropdown-menu { display: flex; margin: 0; }
 .btn.danger { background: var(--color-error); color: #fff; }
 .btn.danger:hover { filter: brightness(1.08); }
 
-/* 右上角用户菜单按钮 */
-#userBtn { display: inline-flex; align-items: center; gap: 6px; max-width: 180px; }
+/* 右上角用户菜单按钮：纯用户名，宽度自适应 */
+#userBtn { display: inline-flex; align-items: center; width: auto; min-width: 0; max-width: 160px; padding: 0 14px; font-size: .8125rem; }
 #userBtnName { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#userBtn .icon:last-child { width: 12px; height: 12px; opacity: .6; }
 #userDropdown .dropdown-menu { min-width: 150px; }
 
 /* toast：底部居中黑胶囊 */
@@ -634,7 +633,7 @@ body > .dropdown-menu { display: flex; margin: 0; }
   .nav { order: 2; width: 100%; flex: 1 1 100%; }
   .nav a { flex: 1; padding: 8px 0; min-width: 0; }
   .sidebar .chip { display: none; }
-  #userBtnName, #userBtn .icon:last-child { display: none; }
+  #userBtn { padding: 0 12px; }
   .topbar { padding: 16px 14px 0; }
   .content { padding: 18px 14px 40px; }
   .grid.cols-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }

@@ -37,6 +37,7 @@ const ICONS = {
   chevron: '<path d="M6 9l6 6 6-6"/>',
   user: '<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
   key: '<path d="M21 2l-2 2m-7.6 7.6a5.5 5.5 0 1 1-7.8 7.8 5.5 5.5 0 0 1 7.8-7.8zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3"/>',
+  info: '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>',
 };
 
 function renderIcons(root = document) {
@@ -236,18 +237,31 @@ $('#loginBtn').onclick = async () => {
   } finally { btn.disabled = false; }
 };
 $('#loginPass').addEventListener('keydown', e => { if (e.key === 'Enter') $('#loginBtn').click(); });
-// 右上角用户菜单
+// 右上角用户菜单（菜单临时挂到 body 并按按钮定位，避开 sidebar 磨砂层劫持 fixed 坐标）
 $('#userBtn').onclick = e => {
   e.stopPropagation();
   const dd = $('#userDropdown');
   const wasOpen = dd.classList.contains('open');
   closeAllDropdowns();
-  if (!wasOpen) {
-    dd.classList.add('open');
-    $('#userBtn').setAttribute('aria-expanded', 'true');
-  }
+  if (wasOpen) return;
+  dd.classList.add('open');
+  $('#userBtn').setAttribute('aria-expanded', 'true');
+  let menu = dd.querySelector('.dropdown-menu') || menuHome.get(dd);
+  if (!menu) return;
+  if (menu.parentElement !== document.body) { menuHome.set(dd, menu); document.body.appendChild(menu); }
+  const rect = $('#userBtn').getBoundingClientRect();
+  menu.style.display = 'flex';
+  menu.style.left = '0px'; menu.style.top = '0px';
+  const mr = menu.getBoundingClientRect();
+  let left = rect.right - (mr.width || 150);
+  if (left < 8) left = 8;
+  let top = rect.bottom + 6;
+  if (top + (mr.height || 0) > window.innerHeight - 8) top = Math.max(8, rect.top - (mr.height || 0) - 6);
+  menu.style.left = Math.round(left) + 'px';
+  menu.style.top = Math.round(top) + 'px';
 };
 $('#userPwBtn').onclick = () => { closeAllDropdowns(); openPasswordModal(); };
+$('#userAboutBtn').onclick = () => { closeAllDropdowns(); openAboutModal(); };
 $('#logoutBtn').onclick = async () => {
   closeAllDropdowns();
   if (!await uiConfirm('退出登录后需要重新输入密码，确定退出？', { title: '退出登录', okText: '退出', danger: true })) return;
@@ -807,6 +821,26 @@ function openPasswordModal() {
   };
   $('#pwSubmitBtn').onclick = submit;
   $('#pwNew').addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
+}
+
+// 关于弹窗（原系统设置「关于」卡片收进用户菜单）
+async function openAboutModal() {
+  openModal(`
+    <div class="modal-head"><h2>关于</h2><button class="modal-close" aria-label="关闭">×</button></div>
+    <div class="kv" id="aboutInfo"><div class="k">加载中…</div><div class="v">—</div></div>`);
+  $('#modal').querySelector('.modal-close').onclick = () => closeModal();
+  try {
+    const [sys, st] = await Promise.all([api('api/system'), api('api/settings')]);
+    const p = sys.panel || {};
+    const met = (sys.host && sys.host.metrics) || {};
+    const el = $('#aboutInfo');
+    if (el) el.innerHTML = `
+      <div class="k">版本</div><div class="v mono">gost-webui ${esc(p.version || '')} (${esc(p.runtimeOS || '')}/${esc(p.runtimeArch || '')})</div>
+      <div class="k">主机运行</div><div class="v">${fmtDuration(met.hostUptime)}</div>
+      <div class="k">配置文件</div><div class="v mono">${esc(p.configFile || '')}</div>
+      <div class="k">面板账号</div><div class="v mono">${esc(st.username || 'admin')}</div>
+      <div class="k">项目地址</div><div class="v"><a href="https://github.com/baiduxc/Gost-webui" target="_blank" rel="noopener noreferrer">github.com/baiduxc/Gost-webui</a></div>`;
+  } catch (e) { toast(e.message, 'err'); }
 }
 
 function closeModal() {
@@ -1660,11 +1694,6 @@ function renderSystem() {
 
   if (p.version) state.version = p.version;
   applyBrand(state.siteTitle);
-  $('#aboutInfo').innerHTML = `
-    <div class="k">版本</div><div class="v mono">gost-webui ${esc(p.version || '')} (${esc(p.runtimeOS || '')}/${esc(p.runtimeArch || '')})</div>
-    <div class="k">主机运行</div><div class="v">${fmtDuration(met.hostUptime)}</div>
-    <div class="k">配置文件</div><div class="v mono">${esc(p.configFile || '')}</div>
-    <div class="k">面板账号</div><div class="v mono">${esc(st.username || 'admin')}</div>`;
 
   renderSubConfig();
 }
