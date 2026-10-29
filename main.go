@@ -30,7 +30,7 @@ import (
 	"gost-webui/internal/store"
 )
 
-var version = "1.8.4"
+var version = "1.8.5"
 
 //go:embed all:web
 var embeddedWeb embed.FS
@@ -43,6 +43,7 @@ func main() {
 	setListen := flag.String("set-listen", "", "设置监听地址：-set-listen :8899")
 	setBasePath := flag.String("set-base-path", "", "设置访问路径：-set-base-path /panel（空串表示根路径）")
 	setPublicHost := flag.String("set-public-host", "", "设置服务器外网地址：-set-public-host 1.2.3.4")
+	reset2FA := flag.Bool("reset-2fa", false, "应急关闭两步验证并注销全部登录会话（验证器/恢复码均丢失时用）")
 	showConf := flag.Bool("show", false, "打印当前配置摘要")
 	flag.Parse()
 
@@ -55,11 +56,12 @@ func main() {
 	provided := map[string]bool{}
 	flag.Visit(func(f *flag.Flag) { provided[f.Name] = true })
 	if provided["set-password"] || provided["set-listen"] || provided["set-base-path"] ||
-		provided["set-public-host"] || provided["show"] {
+		provided["set-public-host"] || provided["reset-2fa"] || provided["show"] {
 		opts := cli.Options{
 			Password:   *setPassword,
 			Listen:     *setListen,
 			PublicHost: *setPublicHost,
+			Reset2FA:   *reset2FA,
 			Show:       *showConf,
 		}
 		if provided["set-base-path"] {
@@ -197,6 +199,7 @@ func main() {
 		Addr:              cfg.Listen,
 		Handler:           srv.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 
 	accessURL := accessURLOf(cfg)

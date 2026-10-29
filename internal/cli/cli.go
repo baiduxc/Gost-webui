@@ -4,6 +4,7 @@
 //	gost-webui -set-listen ":8899"
 //	gost-webui -set-base-path "/panel"
 //	gost-webui -set-public-host "1.2.3.4"
+//	gost-webui -reset-2fa
 //	gost-webui -show
 //
 // 说明：面板运行时数据库被占用，请先停服务再执行（go-ui 会自动处理）。
@@ -27,12 +28,15 @@ type Options struct {
 	Listen     string
 	BasePath   *string // 允许设置为空串（根路径）
 	PublicHost string
-	Show       bool
+	// Reset2FA 清除两步验证绑定、恢复码、可信设备与全部登录会话。
+	// 用于验证器丢失、恢复码也用尽时的应急恢复。
+	Reset2FA bool
+	Show     bool
 }
 
 // Handled 表示是否有维护命令需要执行。
 func (o Options) Handled() bool {
-	return o.Password != "" || o.Listen != "" || o.BasePath != nil || o.PublicHost != "" || o.Show
+	return o.Password != "" || o.Listen != "" || o.BasePath != nil || o.PublicHost != "" || o.Reset2FA || o.Show
 }
 
 // Run 执行维护命令。
@@ -70,8 +74,8 @@ func Run(cfgPath string, o Options) error {
 		if f := strings.Fields(o.Password); len(f) == 2 {
 			user, pass = f[0], f[1]
 		}
-		if len(pass) < 6 {
-			return fmt.Errorf("密码至少 6 位")
+		if len(pass) < 8 {
+			return fmt.Errorf("密码至少 8 位")
 		}
 		if err := setYAML(cfgPath, "admin", "username", fmt.Sprintf("%q", user)); err != nil {
 			return err
@@ -83,10 +87,13 @@ func Run(cfgPath string, o Options) error {
 	}
 
 	// 同步数据库（数据库优先于配置文件，需要一并处理）
-	if o.Listen != "" || o.BasePath != nil || o.PublicHost != "" || o.Password != "" {
+	if o.Listen != "" || o.BasePath != nil || o.PublicHost != "" || o.Password != "" || o.Reset2FA {
 		if err := syncDB(cfg, o); err != nil {
 			return err
 		}
+	}
+	if o.Reset2FA {
+		fmt.Println("两步验证已重置，所有登录会话与可信设备已失效；下次登录只需密码。")
 	}
 
 	if o.Show {
@@ -126,6 +133,19 @@ func syncDB(cfg *config.Config, o Options) error {
 		_ = st.SetSetting("admin_user", user)
 		if h, err := bcrypt.GenerateFromPassword([]byte(pass), bcrypt.DefaultCost); err == nil {
 			_ = st.SetSetting("admin_hash", string(h))
+		}
+	}
+	if o.Reset2FA {
+		for _, k := range []string{"totp_secret", "totp_enabled", "totp_enabled_at", "totp_last_step", "totp_recovery_codes"} {
+			if err := st.DelSetting(k); err != nil {
+				return err
+			}
+		}
+		if err := st.DeleteAllDevices(); err != nil {
+			return err
+		}
+		if err := st.DeleteAllSessions(); err != nil {
+			return err
 		}
 	}
 	return nil

@@ -16,16 +16,32 @@
     <div class="eyebrow">GOST · TUNNEL MANAGER</div>
     <h1>Gost面板</h1>
     <p class="sub">转发管理 · 流量管控 · 告警通知</p>
-    <div class="field">
-      <label for="loginUser">用户名</label>
-      <input id="loginUser" type="text" value="admin" autocomplete="username">
+    <div id="loginStep1">
+      <div class="field">
+        <label for="loginUser">用户名</label>
+        <input id="loginUser" type="text" value="admin" autocomplete="username">
+      </div>
+      <div class="field">
+        <label for="loginPass">密码</label>
+        <input id="loginPass" type="password" autocomplete="current-password" placeholder="请输入密码">
+      </div>
+      <div id="loginErr" class="notice err hidden"></div>
+      <button id="loginBtn" class="btn">登 录</button>
     </div>
-    <div class="field">
-      <label for="loginPass">密码</label>
-      <input id="loginPass" type="password" autocomplete="current-password" placeholder="请输入密码">
+    <div id="loginStep2" class="hidden">
+      <div class="login-step-hint">请输入身份验证器 App 中的 6 位动态码，或使用一枚恢复码。</div>
+      <div class="field">
+        <label for="loginCode">动态验证码 / 恢复码</label>
+        <input id="loginCode" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="20" placeholder="123456">
+      </div>
+      <div class="field" style="margin-bottom:var(--space-lg)">
+        <label class="switch"><input type="checkbox" id="loginRemember"><span class="track"></span>
+          <span><span class="txt">记住此设备 30 天</span><span class="desc">该浏览器下次登录免动态码，公共电脑请勿勾选</span></span></label>
+      </div>
+      <div id="loginErr2" class="notice err hidden"></div>
+      <button id="loginOtpBtn" class="btn">验 证</button>
+      <button id="loginBackBtn" class="btn ghost sm login-back">返回上一步</button>
     </div>
-    <div id="loginErr" class="notice err hidden"></div>
-    <button id="loginBtn" class="btn">登 录</button>
   </div>
 </div>
 
@@ -50,6 +66,7 @@
           <button class="btn ghost sm" id="userBtn" aria-expanded="false" title="账户菜单"><span id="userBtnName">账户</span></button>
           <div class="dropdown-menu" id="userMenu">
             <button id="userPwBtn"><span data-icon="key"></span>修改密码</button>
+            <button id="user2faBtn"><span data-icon="shield"></span>两步验证</button>
             <button id="userAboutBtn"><span data-icon="info"></span>关于</button>
             <button id="logoutBtn" class="danger"><span data-icon="logout"></span>退出登录</button>
           </div>
@@ -210,6 +227,21 @@
             </div>
           </div>
           <div class="notice" id="sysAccessInfo"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <div>
+              <h2>账号安全</h2>
+              <div class="desc">两步验证、可信设备与登录态管理</div>
+            </div>
+            <div class="btn-group">
+              <button class="btn secondary sm" id="revokeSessionsBtn">注销其它设备</button>
+              <button class="btn sm" id="sec2faBtn">两步验证</button>
+            </div>
+          </div>
+          <div class="kv" id="secInfo"></div>
+          <div class="hint" style="margin-top:10px">两步验证使用 Google Authenticator、Microsoft Authenticator、1Password 等 App 生成的 6 位动态码；请妥善保存启用时下发的恢复码，验证器丢失时可凭恢复码登录。</div>
         </div>
 
         <div class="card">

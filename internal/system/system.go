@@ -7,7 +7,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"syscall"
 )
 
 // Metrics 是主机负载快照。
@@ -100,20 +99,6 @@ func readMem(m *Metrics) {
 	if m.SwapTotal > 0 {
 		m.SwapUsed = m.SwapTotal - vals["SwapFree"]
 		m.SwapPercent = round1(float64(m.SwapUsed) / float64(m.SwapTotal) * 100)
-	}
-}
-
-func readDisk(m *Metrics) {
-	var st syscall.Statfs_t
-	if err := syscall.Statfs("/", &st); err != nil {
-		return
-	}
-	total := st.Blocks * uint64(st.Bsize)
-	free := st.Bavail * uint64(st.Bsize)
-	m.DiskTotal = total
-	if total > 0 {
-		m.DiskUsed = total - free
-		m.DiskPercent = round1(float64(m.DiskUsed) / float64(total) * 100)
 	}
 }
 

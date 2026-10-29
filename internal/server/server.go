@@ -12,6 +12,7 @@ import (
 	"math/big"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -38,10 +39,16 @@ type Server struct {
 	restartMu sync.Mutex
 	restartFn func()
 
-	mu       sync.Mutex
-	failures map[string]*loginFailure
-	hostIP   string
-	hostTime time.Time
+	guard     *loginGuard
+	dummyHash []byte
+	hostMu    sync.Mutex
+	hostIP    string
+	hostTime  time.Time
+
+	// 两步验证的临时状态（仅内存）：待确认绑定密钥与登录挑战。
+	otpMu   sync.Mutex
+	pending map[string]pendingSetup
+	chals   map[string]*loginChallenge
 
 	// 独立订阅监听器与证书管理器。
 	subMu    sync.Mutex
@@ -61,7 +68,13 @@ func New(cfg *config.Config, ctl *controller.Controller, web fs.FS, log *slog.Lo
 		sess:     newSessionStore(ctl.Store),
 		basePath: config.NormalizeBasePath(cfg.BasePath),
 		started:  time.Now(),
-		failures: map[string]*loginFailure{},
+		guard:    newLoginGuard(),
+		pending:  map[string]pendingSetup{},
+		chals:    map[string]*loginChallenge{},
+	}
+	// 用户名不匹配时也跑一次 bcrypt，让耗时与真实校验一致，避免用户名枚举
+	if h, err := bcrypt.GenerateFromPassword([]byte("gost-webui-dummy"), bcrypt.DefaultCost); err == nil {
+		s.dummyHash = h
 	}
 	s.routes()
 	return s
@@ -79,8 +92,16 @@ func (s *Server) BasePath() string { return s.basePath }
 
 func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/login", s.handleLogin)
+	s.mux.HandleFunc("POST /api/login/2fa", s.handleLogin2FA)
 	s.mux.HandleFunc("POST /api/logout", s.handleLogout)
 	s.mux.HandleFunc("GET /api/session", s.auth(s.handleSession))
+	s.mux.HandleFunc("POST /api/sessions/revoke-others", s.auth(s.handleRevokeOtherSessions))
+
+	s.mux.HandleFunc("GET /api/2fa", s.auth(s.handle2FAStatus))
+	s.mux.HandleFunc("POST /api/2fa/setup", s.auth(s.handle2FASetup))
+	s.mux.HandleFunc("POST /api/2fa/enable", s.auth(s.handle2FAEnable))
+	s.mux.HandleFunc("POST /api/2fa/disable", s.auth(s.handle2FADisable))
+	s.mux.HandleFunc("POST /api/2fa/recovery", s.auth(s.handle2FARecovery))
 
 	s.mux.HandleFunc("GET /api/overview", s.auth(s.handleOverview))
 	s.mux.HandleFunc("GET /api/nodes", s.auth(s.handleListNodes))
@@ -135,7 +156,7 @@ func (s *Server) routes() {
 // Handler 返回 http.Handler（支持访问路径前缀）。
 func (s *Server) Handler() http.Handler {
 	if s.basePath == "" {
-		return s.mux
+		return s.securityMiddleware(s.mux)
 	}
 	outer := http.NewServeMux()
 	outer.Handle(s.basePath+"/", http.StripPrefix(s.basePath, s.mux))
@@ -147,7 +168,7 @@ func (s *Server) Handler() http.Handler {
 	outer.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, s.basePath+"/", http.StatusFound)
 	})
-	return outer
+	return s.securityMiddleware(outer)
 }
 
 // ---------- 通用工具 ----------
@@ -174,8 +195,10 @@ func decodeJSON(r *http.Request, v any) error {
 
 // ---------- 会话认证 ----------
 
+// session 是一个已登录会话，ua 为客户端标识摘要（会话绑定）。
 type session struct {
 	user    string
+	ua      string
 	expires time.Time
 }
 
@@ -204,48 +227,66 @@ func newSessionStore(db *store.Store) *sessionStore {
 				}
 			}
 			st.mu.Unlock()
+			if st.db != nil {
+				_, _ = st.db.PruneDevices()
+			}
 		}
 	}()
 	return st
 }
 
-const cookieName = "gost_webui_session"
+const (
+	cookieName = "gost_webui_session"
+	// sessionTTL 是登录态的绝对有效期。
+	sessionTTL = 7 * 24 * time.Hour
+)
 
-func (st *sessionStore) create(user string) (string, time.Time) {
+// bound 判断会话与当前客户端是否匹配。
+// 会话或客户端缺少标识时不做限制，避免代理剥离 UA 后把正常用户踢下线。
+func (st session) bound(ua string) bool {
+	return st.ua == "" || ua == "" || st.ua == ua
+}
+
+func (st *sessionStore) create(user, ua string) (string, time.Time) {
 	b := make([]byte, 32)
 	_, _ = rand.Read(b)
 	token := hex.EncodeToString(b)
-	exp := time.Now().Add(7 * 24 * time.Hour)
+	exp := time.Now().Add(sessionTTL)
 	st.mu.Lock()
-	st.m[token] = session{user: user, expires: exp}
+	st.m[token] = session{user: user, ua: ua, expires: exp}
 	st.mu.Unlock()
 	if st.db != nil {
-		_ = st.db.SaveSession(token, store.Session{User: user, ExpiresAt: exp.Unix()})
+		_ = st.db.SaveSession(token, store.Session{User: user, ExpiresAt: exp.Unix(), UA: ua})
 	}
 	return token, exp
 }
 
-func (st *sessionStore) get(token string) (string, bool) {
+func (st *sessionStore) get(token, ua string) (session, bool) {
 	st.mu.Lock()
 	if v, ok := st.m[token]; ok {
-		if time.Now().After(v.expires) {
+		if time.Now().After(v.expires) || !v.bound(ua) {
 			delete(st.m, token)
 		} else {
 			st.mu.Unlock()
-			return v.user, true
+			return v, true
 		}
 	}
 	st.mu.Unlock()
 
 	if st.db != nil {
 		if ses, ok := st.db.GetSession(token); ok && time.Now().Unix() < ses.ExpiresAt {
+			v := session{user: ses.User, ua: ses.UA, expires: time.Unix(ses.ExpiresAt, 0)}
+			if !v.bound(ua) {
+				_ = st.db.DeleteSession(token)
+				return session{}, false
+			}
 			st.mu.Lock()
-			st.m[token] = session{user: ses.User, expires: time.Unix(ses.ExpiresAt, 0)}
+			st.m[token] = v
 			st.mu.Unlock()
-			return ses.User, true
+			return v, true
 		}
 	}
-	return "", false
+	return session{}, false
 }
 
 func (st *sessionStore) remove(token string) {
@@ -257,6 +298,20 @@ func (st *sessionStore) remove(token string) {
 	}
 }
 
+// removeOthers 清理内存中除 keep 之外的会话，返回清理数量。
+func (st *sessionStore) removeOthers(keep string) int {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	n := 0
+	for k := range st.m {
+		if k != keep {
+			delete(st.m, k)
+			n++
+		}
+	}
+	return n
+}
+
 func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		c, err := r.Cookie(cookieName)
@@ -264,12 +319,12 @@ func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 			writeErr(w, http.StatusUnauthorized, "未登录")
 			return
 		}
-		user, ok := s.sess.get(c.Value)
+		ses, ok := s.sess.get(c.Value, uaHash(r))
 		if !ok {
 			writeErr(w, http.StatusUnauthorized, "登录已过期")
 			return
 		}
-		if user != s.adminUser() {
+		if ses.user != s.adminUser() {
 			writeErr(w, http.StatusUnauthorized, "账号已变更，请重新登录")
 			return
 		}
@@ -313,9 +368,37 @@ func (s *Server) checkPassword(pass string) bool {
 	return false
 }
 
-type loginFailure struct {
-	count int
-	until time.Time
+// ---------- 登录 ----------
+
+// startSession 建立登录态并下发会话 Cookie。
+func (s *Server) startSession(w http.ResponseWriter, r *http.Request, user string) {
+	token, exp := s.sess.create(user, uaHash(r))
+	http.SetCookie(w, &http.Cookie{
+		Name:     cookieName,
+		Value:    token,
+		Path:     s.cookiePath(),
+		Expires:  exp,
+		MaxAge:   int(sessionTTL / time.Second),
+		HttpOnly: true,
+		Secure:   requestIsTLS(r),
+		SameSite: http.SameSiteStrictMode,
+	})
+}
+
+func sessionToken(r *http.Request) string {
+	if c, err := r.Cookie(cookieName); err == nil {
+		return c.Value
+	}
+	return ""
+}
+
+// revokeOtherSessions 保留当前会话，其余登录态全部下线。
+func (s *Server) revokeOtherSessions(r *http.Request) {
+	token := sessionToken(r)
+	s.sess.removeOthers(token)
+	if s.ctl.Store != nil {
+		_ = s.ctl.Store.DeleteOtherSessions(token)
+	}
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -327,43 +410,78 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "请求格式错误")
 		return
 	}
-	ip := clientIP(r)
-	s.mu.Lock()
-	if f := s.failures[ip]; f != nil && time.Now().Before(f.until) {
-		s.mu.Unlock()
-		writeErr(w, http.StatusTooManyRequests, "尝试过于频繁，请稍后再试")
+	req.Username = strings.TrimSpace(req.Username)
+	if len(req.Username) > 64 || len(req.Password) > 256 {
+		writeErr(w, http.StatusBadRequest, "用户名或密码长度不合法")
 		return
 	}
-	s.mu.Unlock()
+	ip := clientIP(r)
+	user := s.adminUser()
+	// 只有真实账号才参与账号维度限流，避免用随机用户名把限流表撑爆
+	isAdmin := subtle.ConstantTimeCompare([]byte(req.Username), []byte(user)) == 1
+	acct := ""
+	if isAdmin {
+		acct = user
+	}
+	if d := s.guard.blocked(ip, acct); d > 0 {
+		s.log.Warn("登录被限流", "user", req.Username, "ip", ip, "retry_after", d.Round(time.Second).String())
+		writeErr(w, http.StatusTooManyRequests, "尝试过于频繁，请 "+humanDuration(d)+" 后再试")
+		return
+	}
 
-	if strings.TrimSpace(req.Username) != s.adminUser() || !s.checkPassword(req.Password) {
-		s.mu.Lock()
-		f := s.failures[ip]
-		if f == nil {
-			f = &loginFailure{}
-			s.failures[ip] = f
-		}
-		f.count++
-		if f.count >= 5 {
-			f.until = time.Now().Add(time.Minute)
-			f.count = 0
-		}
-		s.mu.Unlock()
+	passOK := false
+	if isAdmin {
+		passOK = s.checkPassword(req.Password)
+	} else if len(s.dummyHash) > 0 {
+		// 恒定耗时：用户名错误时也跑一次 bcrypt，避免账号枚举
+		_ = bcrypt.CompareHashAndPassword(s.dummyHash, []byte(req.Password))
+	}
+	if !passOK {
+		s.guard.fail(ip, acct)
+		s.log.Warn("登录失败", "user", req.Username, "ip", ip)
 		writeErr(w, http.StatusUnauthorized, "用户名或密码错误")
 		return
 	}
+	s.guard.success(ip, acct)
 
-	token, exp := s.sess.create(req.Username)
-	http.SetCookie(w, &http.Cookie{
-		Name:     cookieName,
-		Value:    token,
-		Path:     s.cookiePath(),
-		Expires:  exp,
-		HttpOnly: true,
-		Secure:   requestIsTLS(r),
-		SameSite: http.SameSiteStrictMode,
-	})
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "username": req.Username})
+	// 已开启两步验证：可信设备直接登录，否则返回一次性挑战
+	if s.TwoFactorEnabled() {
+		if devUser, ok := s.knownDevice(r); ok && devUser == user {
+			s.startSession(w, r, user)
+			s.log.Info("登录成功（可信设备）", "user", user, "ip", ip)
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "username": user, "device": true})
+			return
+		}
+		challenge, err := s.createChallenge(user, ip, uaHash(r))
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "生成验证挑战失败")
+			return
+		}
+		s.log.Info("密码校验通过，等待两步验证", "ip", ip)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok":        true,
+			"need2fa":   true,
+			"challenge": challenge,
+			"expiresIn": int(challengeTTL / time.Second),
+		})
+		return
+	}
+
+	s.startSession(w, r, user)
+	s.log.Info("登录成功", "user", user, "ip", ip)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "username": user})
+}
+
+// humanDuration 把等待时间格式化为中文提示。
+func humanDuration(d time.Duration) string {
+	if d >= time.Minute {
+		return strconv.Itoa(int(d.Round(time.Minute)/time.Minute)) + " 分钟"
+	}
+	s := int(d.Round(time.Second) / time.Second)
+	if s < 1 {
+		s = 1
+	}
+	return strconv.Itoa(s) + " 秒"
 }
 
 func (s *Server) cookiePath() string {
@@ -388,27 +506,43 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie(cookieName); err == nil {
 		s.sess.remove(c.Value)
 	}
+	// 主动退出同时忘掉本机的可信设备，共享电脑上不会残留免验证令牌
+	if c, err := r.Cookie(deviceCookieName); err == nil && c.Value != "" {
+		_ = s.ctl.Store.DeleteDevice(deviceKey(c.Value))
+	}
+	s.clearDeviceCookie(w)
 	http.SetCookie(w, &http.Cookie{Name: cookieName, Value: "", Path: s.cookiePath(), MaxAge: -1})
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
-		"loggedIn": true,
-		"username": s.adminUser(),
+		"loggedIn":  true,
+		"username":  s.adminUser(),
+		"twoFactor": s.TwoFactorEnabled(),
 	})
 }
 
+// clientIP 返回真实客户端 IP。
+// 仅在直连对端是回环/内网地址（即前置反代或 Docker 网络）时才信任 X-Forwarded-For，
+// 避免公网客户端伪造该头绕过登录限流。
 func clientIP(r *http.Request) string {
-	if v := r.Header.Get("X-Forwarded-For"); v != "" {
-		if i := strings.IndexByte(v, ','); i > 0 {
-			return strings.TrimSpace(v[:i])
-		}
-		return strings.TrimSpace(v)
-	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return r.RemoteAddr
+		host = r.RemoteAddr
+	}
+	ip := net.ParseIP(host)
+	if ip == nil || !(ip.IsLoopback() || ip.IsPrivate()) {
+		return host
+	}
+	if v := r.Header.Get("X-Forwarded-For"); v != "" {
+		first := strings.TrimSpace(strings.Split(v, ",")[0])
+		if net.ParseIP(first) != nil {
+			return first
+		}
+	}
+	if v := strings.TrimSpace(r.Header.Get("X-Real-IP")); net.ParseIP(v) != nil {
+		return v
 	}
 	return host
 }

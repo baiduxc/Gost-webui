@@ -37,6 +37,7 @@ const ICONS = {
   chevron: '<path d="M6 9l6 6 6-6"/>',
   user: '<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
   key: '<path d="M21 2l-2 2m-7.6 7.6a5.5 5.5 0 1 1-7.8 7.8 5.5 5.5 0 0 1 7.8-7.8zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3"/>',
+  shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/>',
   info: '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>',
 };
 
@@ -54,6 +55,8 @@ const icon = (name, cls = '') =>
 let state = {
   siteTitle: 'Gost-WebUI',
   version: '',
+  twoFactor: false,
+  challenge: '',
 
   view: 'overview',
   nodes: [],
@@ -70,13 +73,15 @@ let state = {
 
 /* ---------------- 工具 ---------------- */
 async function api(path, opts = {}) {
+  // silent401：登录/二次验证接口自行处理 401，不触发全局跳登录页
+  const { silent401 = false, ...init } = opts;
   const res = await fetch(BASE + path, {
     credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' },
-    ...opts,
-    body: opts.body ? JSON.stringify(opts.body) : undefined,
+    ...init,
+    body: init.body ? JSON.stringify(init.body) : undefined,
   });
-  if (res.status === 401) {
+  if (res.status === 401 && !silent401) {
     showLogin();
     throw new Error('未登录');
   }
@@ -171,8 +176,9 @@ async function init() {
   renderIcons();
   loadBrand();
   let sess = null;
-  try { sess = await api('api/session'); } catch (e) { sess = null; }
+  try { sess = await api('api/session', { silent401: true }); } catch (e) { sess = null; }
   if (sess && sess.username) { const un = $('#userBtnName'); if (un) un.textContent = sess.username; }
+  if (sess) state.twoFactor = !!sess.twoFactor;
   if (sess && sess.loggedIn) showApp(); else showLogin();
 }
 
@@ -203,6 +209,35 @@ function showLogin() {
   $('#login').classList.remove('hidden');
   clearInterval(state.timer);
   state.timer = null;
+  resetLoginStep();
+}
+
+/* 登录两步：密码 / 动态码 */
+function resetLoginStep() {
+  state.challenge = '';
+  const code = $('#loginCode');
+  if (code) code.value = '';
+  const rm = $('#loginRemember');
+  if (rm) rm.checked = false;
+  showLoginStep(1);
+}
+function showLoginStep(step) {
+  $('#loginStep1').classList.toggle('hidden', step !== 1);
+  $('#loginStep2').classList.toggle('hidden', step !== 2);
+  clearLoginError();
+}
+function clearLoginError() {
+  ['#loginErr', '#loginErr2'].forEach(sel => {
+    const el = $(sel);
+    if (el) { el.textContent = ''; el.classList.add('hidden'); }
+  });
+}
+function loginError(msg) {
+  const onStep2 = !$('#loginStep2').classList.contains('hidden');
+  const el = $(onStep2 ? '#loginErr2' : '#loginErr');
+  if (!el) return;
+  el.textContent = msg;
+  el.classList.remove('hidden');
 }
 function showApp() {
   $('#login').classList.add('hidden');
@@ -211,7 +246,9 @@ function showApp() {
   // 右上角显示当前登录用户名
   api('api/session').then(s => {
     if (s && s.username) { const un = $('#userBtnName'); if (un) un.textContent = s.username; }
+    state.twoFactor = !!(s && s.twoFactor);
   }).catch(() => {});
+  refresh2FAState();
   refreshAll();
   if (!state.timer) state.timer = setInterval(refreshAll, 5000);
   if (!state.versionLoaded) {
@@ -226,16 +263,48 @@ function showApp() {
 $('#loginBtn').onclick = async () => {
   const btn = $('#loginBtn');
   btn.disabled = true;
-  const err = $('#loginErr');
-  err.classList.add('hidden');
+  clearLoginError();
   try {
-    await api('api/login', { method: 'POST', body: { username: $('#loginUser').value.trim(), password: $('#loginPass').value } });
+    const r = await api('api/login', {
+      method: 'POST',
+      silent401: true,
+      body: { username: $('#loginUser').value.trim(), password: $('#loginPass').value },
+    });
+    if (r && r.need2fa) {
+      state.challenge = r.challenge || '';
+      $('#loginPass').value = '';
+      showLoginStep(2);
+      setTimeout(() => $('#loginCode').focus(), 30);
+      return;
+    }
+    $('#loginPass').value = '';
     showApp();
   } catch (e) {
-    err.textContent = e.message;
-    err.classList.remove('hidden');
+    loginError(e.message);
   } finally { btn.disabled = false; }
 };
+$('#loginOtpBtn').onclick = async () => {
+  const code = $('#loginCode').value.trim();
+  if (!code) { loginError('请输入动态码或恢复码'); return; }
+  const btn = $('#loginOtpBtn');
+  btn.disabled = true;
+  clearLoginError();
+  try {
+    await api('api/login/2fa', {
+      method: 'POST',
+      silent401: true,
+      body: { challenge: state.challenge, code, remember: !!$('#loginRemember').checked },
+    });
+    resetLoginStep();
+    showApp();
+  } catch (e) {
+    loginError(e.message);
+    // 挑战过期或失败次数用尽时，回到第一步重新输入密码
+    if (/过期|重新登录/.test(e.message)) state.challenge = '';
+  } finally { btn.disabled = false; }
+};
+$('#loginBackBtn').onclick = () => { state.challenge = ''; showLoginStep(1); };
+$('#loginCode').addEventListener('keydown', e => { if (e.key === 'Enter') $('#loginOtpBtn').click(); });
 $('#loginPass').addEventListener('keydown', e => { if (e.key === 'Enter') $('#loginBtn').click(); });
 // 右上角用户菜单（菜单临时挂到 body 并按按钮定位，避开 sidebar 磨砂层劫持 fixed 坐标）
 $('#userBtn').onclick = e => {
@@ -261,6 +330,15 @@ $('#userBtn').onclick = e => {
   menu.style.top = Math.round(top) + 'px';
 };
 $('#userPwBtn').onclick = () => { closeAllDropdowns(); openPasswordModal(); };
+$('#user2faBtn').onclick = () => { closeAllDropdowns(); open2FAModal(); };
+$('#sec2faBtn').onclick = () => open2FAModal();
+$('#revokeSessionsBtn').onclick = async () => {
+  if (!await uiConfirm('将注销除本机外的全部登录会话，已记住的可信设备不受影响。确定继续？', { title: '注销其它设备', okText: '注销', danger: true })) return;
+  try {
+    const r = await api('api/sessions/revoke-others', { method: 'POST' });
+    toast(`已注销 ${(r && r.revoked) || 0} 个会话`);
+  } catch (e) { toast(e.message, 'err'); }
+};
 $('#userAboutBtn').onclick = () => { closeAllDropdowns(); openAboutModal(); };
 $('#logoutBtn').onclick = async () => {
   closeAllDropdowns();
@@ -798,13 +876,20 @@ function uiConfirm(message, { title = '确认操作', okText = '确定', danger 
 }
 
 // 修改密码弹窗（从右上角用户菜单打开）
-function openPasswordModal() {
+// 已开启两步验证时需同时提供动态码，避免会话被劫持后直接改密。
+async function openPasswordModal() {
+  try {
+    const st = await api('api/2fa');
+    state.twoFactor = !!st.enabled;
+    renderSecurityCard(st);
+  } catch (e) { /* 读取失败时按旧状态展示 */ }
   openModal(`
     <div class="modal-head"><h2>修改密码</h2><button class="modal-close" aria-label="关闭">×</button></div>
     <div class="row">
       <div class="field"><label for="pwOld">原密码</label><input id="pwOld" type="password" autocomplete="current-password"></div>
-      <div class="field"><label for="pwNew">新密码（至少 6 位）</label><input id="pwNew" type="password" autocomplete="new-password"></div>
+      <div class="field"><label for="pwNew">新密码（至少 8 位）</label><input id="pwNew" type="password" autocomplete="new-password"></div>
     </div>
+    ${state.twoFactor ? `<div class="field"><label for="pwCode">动态验证码</label><input id="pwCode" inputmode="numeric" maxlength="20" autocomplete="one-time-code" placeholder="6 位验证码或恢复码"><div class="hint">已开启两步验证，改密码需同时提供动态码</div></div>` : ''}
     <div class="modal-foot" style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px">
       <button class="btn secondary sm" id="pwCancelBtn">取消</button>
       <button class="btn sm" id="pwSubmitBtn">保存</button>
@@ -815,12 +900,223 @@ function openPasswordModal() {
   const submit = async () => {
     const btn = $('#pwSubmitBtn'); btn.disabled = true;
     try {
-      await api('api/password', { method: 'POST', body: { oldPassword: $('#pwOld').value, newPassword: $('#pwNew').value } });
-      close(); toast('密码已修改');
+      const codeEl = $('#pwCode');
+      await api('api/password', {
+        method: 'POST',
+        body: { oldPassword: $('#pwOld').value, newPassword: $('#pwNew').value, code: codeEl ? codeEl.value.trim() : '' },
+      });
+      close(); toast('密码已修改，其它设备的登录态已失效');
     } catch (e) { btn.disabled = false; toast(e.message, 'err'); }
   };
   $('#pwSubmitBtn').onclick = submit;
   $('#pwNew').addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
+}
+
+/* ---------------- 两步验证 ---------------- */
+function twoFactorDot(enabled) {
+  return enabled
+    ? '<span class="status-inline"><span class="status-dot ok"></span>已启用</span>'
+    : '<span class="status-inline"><span class="status-dot"></span>未启用</span>';
+}
+
+function tfaClearError() {
+  const el = $('#tfaErr');
+  if (el) { el.textContent = ''; el.classList.add('hidden'); }
+}
+function tfaError(msg) {
+  const el = $('#tfaErr');
+  if (el) { el.textContent = msg; el.classList.remove('hidden'); } else toast(msg, 'err');
+}
+
+// refresh2FAState 同步两步验证状态并刷新系统页的安全卡片。
+async function refresh2FAState() {
+  try {
+    const st = await api('api/2fa');
+    state.twoFactor = !!st.enabled;
+    renderSecurityCard(st);
+    return st;
+  } catch (e) { return null; }
+}
+
+function renderSecurityCard(st) {
+  const el = $('#secInfo');
+  if (!el) return;
+  el.innerHTML = `
+    <div class="k">两步验证</div><div class="v">${twoFactorDot(st.enabled)}</div>
+    <div class="k">恢复码</div><div class="v">${st.enabled ? `剩余 ${Number(st.recoveryLeft) || 0} 枚` : '启用后自动生成 10 枚'}</div>
+    <div class="k">可信设备</div><div class="v">登录时勾选后 ${Number(st.deviceDays) || 30} 天内免动态码</div>
+    <div class="k">会话保护</div><div class="v">登录态与浏览器绑定、7 天有效；改密码后其它设备自动下线</div>`;
+}
+
+async function open2FAModal() {
+  let st = null;
+  try { st = await api('api/2fa'); } catch (e) { toast(e.message, 'err'); return; }
+  state.twoFactor = !!st.enabled;
+  renderSecurityCard(st);
+  render2FAStatus(st);
+}
+
+function render2FAStatus(st) {
+  const enablePanel = `
+    <div class="notice" style="margin-top:14px">启用后登录需输入验证器 App 生成的 6 位动态码，密码泄露也无法直接登录。</div>
+    <div class="field" style="margin-top:14px"><label for="tfaPw">当前密码</label><input id="tfaPw" type="password" autocomplete="current-password" placeholder="验证身份后生成二维码"></div>
+    <div id="tfaErr" class="notice err hidden"></div>
+    <div class="btn-group"><button class="btn sm" id="tfaStartBtn">获取二维码</button></div>`;
+  const managePanel = `
+    <div class="btn-group" style="margin-top:16px">
+      <button class="btn secondary sm" id="tfaRegenBtn">重新生成恢复码</button>
+      <button class="btn danger sm" id="tfaDisableBtn">停用两步验证</button>
+    </div>`;
+  openModal(`
+    <div class="modal-head"><h2>两步验证</h2><button class="modal-close" aria-label="关闭">×</button></div>
+    <div class="kv">
+      <div class="k">状态</div><div class="v">${twoFactorDot(st.enabled)}</div>
+      <div class="k">恢复码</div><div class="v">${st.enabled ? `剩余 <b>${Number(st.recoveryLeft) || 0}</b> 枚` : '启用后自动生成 10 枚'}</div>
+      <div class="k">可信设备</div><div class="v">登录时勾选“记住此设备”，${Number(st.deviceDays) || 30} 天内免动态码</div>
+      <div class="k">账号</div><div class="v mono">${esc(st.account || '')}</div>
+    </div>
+    ${st.enabled ? managePanel : enablePanel}`);
+  $('#modal').querySelector('.modal-close').onclick = () => closeModal();
+  if (st.enabled) {
+    $('#tfaRegenBtn').onclick = render2FARegen;
+    $('#tfaDisableBtn').onclick = render2FADisable;
+  } else {
+    $('#tfaStartBtn').onclick = start2FASetup;
+    $('#tfaPw').addEventListener('keydown', e => { if (e.key === 'Enter') start2FASetup(); });
+  }
+}
+
+async function start2FASetup() {
+  const pwEl = $('#tfaPw');
+  const pw = pwEl ? pwEl.value : '';
+  if (!pw) { tfaError('请输入当前密码'); return; }
+  const btn = $('#tfaStartBtn');
+  if (btn) btn.disabled = true;
+  tfaClearError();
+  try {
+    const r = await api('api/2fa/setup', { method: 'POST', body: { password: pw } });
+    render2FASetup(r);
+  } catch (e) {
+    tfaError(e.message);
+    if (btn) btn.disabled = false;
+  }
+}
+
+function render2FASetup(r) {
+  openModal(`
+    <div class="modal-head"><h2>绑定身份验证器</h2><button class="modal-close" aria-label="关闭">×</button></div>
+    <div class="tfa-setup">
+      <div class="qr"><img alt="两步验证二维码" src="${esc(r.qr)}"></div>
+      <div class="tfa-setup-info">
+        <p class="tfa-tip">使用 Google Authenticator、Microsoft Authenticator、1Password 等 App 扫描左侧二维码。</p>
+        <div class="tfa-secret-label">无法扫码时手动输入密钥</div>
+        <div class="tfa-secret mono" id="tfaSecret">${esc(r.secret)}</div>
+        <button class="btn ghost sm" id="tfaCopySecret"><span data-icon="copy"></span>复制密钥</button>
+      </div>
+    </div>
+    <div class="field" style="margin-top:16px">
+      <label for="tfaCode">输入 App 显示的 6 位验证码</label>
+      <input id="tfaCode" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="123456">
+    </div>
+    <div id="tfaErr" class="notice err hidden"></div>
+    <div class="btn-group"><button class="btn sm" id="tfaEnableBtn">启用两步验证</button></div>`);
+  $('#modal').querySelector('.modal-close').onclick = () => closeModal();
+  renderIcons($('#modal'));
+  $('#tfaCopySecret').onclick = () => copyText(r.secret);
+  $('#tfaEnableBtn').onclick = enable2FA;
+  $('#tfaCode').addEventListener('keydown', e => { if (e.key === 'Enter') enable2FA(); });
+  setTimeout(() => { const el = $('#tfaCode'); if (el) el.focus(); }, 30);
+}
+
+async function enable2FA() {
+  const codeEl = $('#tfaCode');
+  const code = codeEl ? codeEl.value.trim() : '';
+  if (!code) { tfaError('请输入验证器显示的 6 位验证码'); return; }
+  const btn = $('#tfaEnableBtn');
+  if (btn) btn.disabled = true;
+  tfaClearError();
+  try {
+    const r = await api('api/2fa/enable', { method: 'POST', body: { code } });
+    state.twoFactor = true;
+    renderRecoveryCodes(r.recoveryCodes || [], '两步验证已启用');
+    refresh2FAState();
+  } catch (e) {
+    tfaError(e.message);
+    if (btn) btn.disabled = false;
+  }
+}
+
+function renderRecoveryCodes(codes, title) {
+  openModal(`
+    <div class="modal-head"><h2>${esc(title)}</h2><button class="modal-close" aria-label="关闭">×</button></div>
+    <div class="notice warn">恢复码只显示这一次，请立即保存到离线位置。每枚恢复码只能使用一次，用于验证器丢失时登录。</div>
+    <div class="codes-grid mono">${codes.map(c => `<span>${esc(c)}</span>`).join('')}</div>
+    <div class="btn-group" style="margin-top:14px">
+      <button class="btn secondary sm" id="tfaCopyCodes"><span data-icon="copy"></span>复制全部</button>
+      <button class="btn sm" id="tfaSavedBtn">我已保存</button>
+    </div>`);
+  $('#modal').querySelector('.modal-close').onclick = () => closeModal();
+  renderIcons($('#modal'));
+  $('#tfaCopyCodes').onclick = () => copyText(codes.join('\n'));
+  $('#tfaSavedBtn').onclick = () => closeModal();
+}
+
+function render2FADisable() {
+  openModal(`
+    <div class="modal-head"><h2>停用两步验证</h2><button class="modal-close" aria-label="关闭">×</button></div>
+    <div class="notice warn">停用后登录只需密码，所有可信设备令牌也会失效。</div>
+    <div class="field"><label for="tfaPw">当前密码</label><input id="tfaPw" type="password" autocomplete="current-password"></div>
+    <div class="field"><label for="tfaCode">动态验证码 / 恢复码</label><input id="tfaCode" inputmode="numeric" maxlength="20" autocomplete="one-time-code" placeholder="123456"></div>
+    <div id="tfaErr" class="notice err hidden"></div>
+    <div class="btn-group"><button class="btn danger sm" id="tfaDisableSubmit">确认停用</button></div>`);
+  $('#modal').querySelector('.modal-close').onclick = () => closeModal();
+  const submit = async () => {
+    const btn = $('#tfaDisableSubmit');
+    btn.disabled = true;
+    tfaClearError();
+    try {
+      await api('api/2fa/disable', {
+        method: 'POST',
+        body: { password: $('#tfaPw').value, code: $('#tfaCode').value.trim() },
+      });
+      state.twoFactor = false;
+      closeModal();
+      toast('两步验证已停用');
+      refresh2FAState();
+    } catch (e) {
+      tfaError(e.message);
+      btn.disabled = false;
+    }
+  };
+  $('#tfaDisableSubmit').onclick = submit;
+}
+
+function render2FARegen() {
+  openModal(`
+    <div class="modal-head"><h2>重新生成恢复码</h2><button class="modal-close" aria-label="关闭">×</button></div>
+    <div class="notice warn">生成新恢复码后，旧恢复码立即失效。</div>
+    <div class="field"><label for="tfaPw">当前密码</label><input id="tfaPw" type="password" autocomplete="current-password"></div>
+    <div class="field"><label for="tfaCode">动态验证码 / 恢复码</label><input id="tfaCode" inputmode="numeric" maxlength="20" autocomplete="one-time-code" placeholder="123456"></div>
+    <div id="tfaErr" class="notice err hidden"></div>
+    <div class="btn-group"><button class="btn sm" id="tfaRegenSubmit">生成新恢复码</button></div>`);
+  $('#modal').querySelector('.modal-close').onclick = () => closeModal();
+  const submit = async () => {
+    const btn = $('#tfaRegenSubmit');
+    btn.disabled = true;
+    tfaClearError();
+    try {
+      const r = await api('api/2fa/recovery', {
+        method: 'POST',
+        body: { password: $('#tfaPw').value, code: $('#tfaCode').value.trim() },
+      });
+      renderRecoveryCodes(r.recoveryCodes || [], '新的恢复码');
+      refresh2FAState();
+    } catch (e) {
+      tfaError(e.message);
+      btn.disabled = false;
+    }
+  };
+  $('#tfaRegenSubmit').onclick = submit;
 }
 
 // 关于弹窗（原系统设置「关于」卡片收进用户菜单）
@@ -1657,6 +1953,7 @@ async function loadSystem() {
     state.settings = st;
     state.subConfig = sc;
     renderSystem();
+    refresh2FAState();
   } catch (e) { toast(e.message, 'err'); }
 }
 

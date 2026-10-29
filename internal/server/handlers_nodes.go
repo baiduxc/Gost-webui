@@ -82,13 +82,13 @@ func (s *Server) publicHost() string {
 
 // detectPublicIP 通过公共接口探测本机公网 IP（带缓存）。
 func (s *Server) detectPublicIP() string {
-	s.mu.Lock()
+	s.hostMu.Lock()
 	if s.hostIP != "" && time.Since(s.hostTime) < 10*time.Minute {
 		ip := s.hostIP
-		s.mu.Unlock()
+		s.hostMu.Unlock()
 		return ip
 	}
-	s.mu.Unlock()
+	s.hostMu.Unlock()
 
 	endpoints := []string{
 		"https://api.ipify.org",
@@ -114,10 +114,10 @@ func (s *Server) detectPublicIP() string {
 		res.Body.Close()
 		ip := parseIPFromBody(string(body))
 		if ip != "" {
-			s.mu.Lock()
+			s.hostMu.Lock()
 			s.hostIP = ip
 			s.hostTime = time.Now()
-			s.mu.Unlock()
+			s.hostMu.Unlock()
 			return ip
 		}
 	}

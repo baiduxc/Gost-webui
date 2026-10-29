@@ -364,17 +364,33 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		OldPassword string `json:"oldPassword"`
 		NewPassword string `json:"newPassword"`
+		// Code 在已开启两步验证时必填（动态码或恢复码）。
+		Code string `json:"code"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeErr(w, http.StatusBadRequest, "请求格式错误")
 		return
 	}
+	ip := clientIP(r)
+	if d := s.guard.blocked(ip, s.adminUser()); d > 0 {
+		writeErr(w, http.StatusTooManyRequests, "尝试过于频繁，请稍后再试")
+		return
+	}
 	if !s.checkPassword(req.OldPassword) {
+		s.guard.fail(ip, s.adminUser())
 		writeErr(w, http.StatusBadRequest, "原密码不正确")
 		return
 	}
-	if len(req.NewPassword) < 6 {
-		writeErr(w, http.StatusBadRequest, "新密码至少 6 位")
+	// 已开启两步验证时，改密码必须同时验证动态码，防止会话被劫持后直接改密
+	if s.TwoFactorEnabled() {
+		if err := s.checkManageCode(strings.TrimSpace(req.Code)); err != nil {
+			s.guard.fail(ip, s.adminUser())
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	if err := validateNewPassword(req.NewPassword, s.adminUser(), req.OldPassword); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	h, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
@@ -386,7 +402,30 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.guard.success(ip, s.adminUser())
+	// 改密后其它设备的登录态与可信设备令牌全部失效
+	s.revokeOtherSessions(r)
+	_ = s.ctl.Store.DeleteAllDevices()
+	s.log.Info("管理员密码已修改", "ip", ip)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// validateNewPassword 校验新密码强度。
+func validateNewPassword(pass, username, oldPass string) error {
+	n := len([]rune(pass))
+	if n < 8 {
+		return fmt.Errorf("新密码至少 8 位")
+	}
+	if n > 128 {
+		return fmt.Errorf("新密码过长（最多 128 位）")
+	}
+	if pass == username {
+		return fmt.Errorf("新密码不能与用户名相同")
+	}
+	if oldPass != "" && pass == oldPass {
+		return fmt.Errorf("新密码不能与原密码相同")
+	}
+	return nil
 }
 
 func (s *Server) handleGostStatus(w http.ResponseWriter, r *http.Request) {

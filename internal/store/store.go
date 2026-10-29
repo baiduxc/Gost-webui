@@ -19,6 +19,7 @@ var (
 	bucketNodes    = []byte("nodes")
 	bucketTraffic  = []byte("traffic")
 	bucketSessions = []byte("sessions")
+	bucketDevices  = []byte("devices")
 )
 
 // ErrNotFound 表示记录不存在。
@@ -40,7 +41,7 @@ func Open(path string) (*Store, error) {
 		return nil, err
 	}
 	err = db.Update(func(tx *bolt.Tx) error {
-		for _, b := range [][]byte{bucketMeta, bucketNodes, bucketTraffic, bucketSessions} {
+		for _, b := range [][]byte{bucketMeta, bucketNodes, bucketTraffic, bucketSessions, bucketDevices} {
 			if _, err := tx.CreateBucketIfNotExists(b); err != nil {
 				return err
 			}
@@ -85,6 +86,13 @@ func (s *Store) GetSetting(key string) (string, bool) {
 func (s *Store) SetSetting(key, value string) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
 		return tx.Bucket(bucketMeta).Put([]byte(key), []byte(value))
+	})
+}
+
+// DelSetting 删除设置项（不存在时无副作用）。
+func (s *Store) DelSetting(key string) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		return tx.Bucket(bucketMeta).Delete([]byte(key))
 	})
 }
 
@@ -249,9 +257,11 @@ func (s *Store) PruneTraffic(before int64) error {
 // ---------- 会话 ----------
 
 // Session 是一个登录会话。
+// UA 是创建会话时的客户端标识摘要，用于会话与浏览器绑定。
 type Session struct {
 	User      string `json:"user"`
 	ExpiresAt int64  `json:"expiresAt"`
+	UA        string `json:"ua,omitempty"`
 }
 
 // SaveSession 保存会话。
@@ -290,6 +300,39 @@ func (s *Store) DeleteSession(token string) error {
 	})
 }
 
+// DeleteOtherSessions 删除除 keep 之外的全部会话（用于改密/禁用两步验证后强制其它设备下线）。
+func (s *Store) DeleteOtherSessions(keep string) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketSessions)
+		var keys [][]byte
+		if err := b.ForEach(func(k, _ []byte) error {
+			if string(k) != keep {
+				keys = append(keys, append([]byte(nil), k...))
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+		for _, k := range keys {
+			if err := b.Delete(k); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// DeleteAllSessions 清空全部登录会话（应急操作）。
+func (s *Store) DeleteAllSessions() error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		if err := tx.DeleteBucket(bucketSessions); err != nil && !errors.Is(err, bolt.ErrBucketNotFound) {
+			return err
+		}
+		_, err := tx.CreateBucketIfNotExists(bucketSessions)
+		return err
+	})
+}
+
 // PruneSessions 清理过期会话。
 func (s *Store) PruneSessions() error {
 	now := time.Now().Unix()
@@ -312,6 +355,90 @@ func (s *Store) PruneSessions() error {
 		}
 		return nil
 	})
+}
+
+// ---------- 可信设备（记住此设备，免二次验证） ----------
+
+// Device 是“记住此设备”令牌。键为令牌的 SHA-256 摘要，数据库中不存明文令牌。
+type Device struct {
+	User      string `json:"user"`
+	UA        string `json:"ua,omitempty"`
+	CreatedAt int64  `json:"createdAt"`
+	ExpiresAt int64  `json:"expiresAt"`
+}
+
+// SaveDevice 保存设备令牌。
+func (s *Store) SaveDevice(key string, d Device) error {
+	b, err := json.Marshal(d)
+	if err != nil {
+		return err
+	}
+	return s.db.Update(func(tx *bolt.Tx) error {
+		return tx.Bucket(bucketDevices).Put([]byte(key), b)
+	})
+}
+
+// GetDevice 读取设备令牌。
+func (s *Store) GetDevice(key string) (Device, bool) {
+	var d Device
+	var ok bool
+	_ = s.db.View(func(tx *bolt.Tx) error {
+		v := tx.Bucket(bucketDevices).Get([]byte(key))
+		if v == nil {
+			return nil
+		}
+		if err := json.Unmarshal(v, &d); err != nil {
+			return nil
+		}
+		ok = true
+		return nil
+	})
+	return d, ok
+}
+
+// DeleteDevice 删除单个设备令牌。
+func (s *Store) DeleteDevice(key string) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		return tx.Bucket(bucketDevices).Delete([]byte(key))
+	})
+}
+
+// DeleteAllDevices 清空全部设备令牌（禁用两步验证、改密码时调用）。
+func (s *Store) DeleteAllDevices() error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		if err := tx.DeleteBucket(bucketDevices); err != nil && !errors.Is(err, bolt.ErrBucketNotFound) {
+			return err
+		}
+		_, err := tx.CreateBucketIfNotExists(bucketDevices)
+		return err
+	})
+}
+
+// PruneDevices 清理过期设备令牌，返回清理数量。
+func (s *Store) PruneDevices() (int, error) {
+	now := time.Now().Unix()
+	removed := 0
+	err := s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketDevices)
+		var keys [][]byte
+		if err := b.ForEach(func(k, v []byte) error {
+			var d Device
+			if json.Unmarshal(v, &d) != nil || d.ExpiresAt < now {
+				keys = append(keys, append([]byte(nil), k...))
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+		for _, k := range keys {
+			if err := b.Delete(k); err != nil {
+				return err
+			}
+		}
+		removed = len(keys)
+		return nil
+	})
+	return removed, err
 }
 
 func sortNodes(ns []*model.Node) {

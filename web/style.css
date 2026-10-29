@@ -685,6 +685,22 @@ body > .dropdown-menu { display: flex; margin: 0; }
   .modal-box .row > * { flex-basis: auto; }
 }
 
+/* ---------------- 两步验证 ---------------- */
+.login-step-hint { font-size: var(--text-caption); color: var(--color-text-secondary); line-height: 1.8; margin-bottom: var(--space-xl); }
+.login-card .login-back { display: block; width: auto; margin: var(--space-sm) auto 0; }
+.login-card .switch .desc { display: block; }
+.tfa-setup { display: flex; gap: var(--space-xl); align-items: flex-start; flex-wrap: wrap; }
+.tfa-setup-info { flex: 1 1 220px; min-width: 0; }
+.tfa-tip { font-size: var(--text-caption); color: var(--color-text-secondary); line-height: 1.8; margin: 0 0 var(--space-md); }
+.tfa-secret-label { font-size: var(--text-caption); color: var(--color-text-tertiary); margin-bottom: 6px; }
+.tfa-secret { padding: 10px 12px; border-radius: var(--radius-sm); background: var(--color-surface-secondary); letter-spacing: .08em; word-break: break-all; margin-bottom: 8px; }
+.codes-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: var(--space-md); }
+.codes-grid span { padding: 8px 10px; border-radius: var(--radius-sm); background: var(--color-surface-secondary); text-align: center; letter-spacing: .06em; word-break: break-all; }
+@media (max-width: 560px) {
+  .codes-grid { grid-template-columns: 1fr; }
+  .tfa-setup { justify-content: center; }
+}
+
 /* 无毛玻璃支持时退回不透明卡面 */
 @supports not (backdrop-filter: blur(2px)) {
   .card, .table-wrap, .login-card { background: var(--color-surface); }
