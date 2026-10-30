@@ -49,6 +49,19 @@ func (s *Server) buildRealityNode(in *nodeInput, old *model.Node) (*model.Node, 
 	n.RealityPub = strings.TrimSpace(in.RealityPub)
 	n.RealityShortID = strings.ToLower(strings.TrimSpace(in.RealityShortId))
 
+	// 地址族：auto（双栈，默认）/ ipv4 / ipv6；提交空值时新建用 auto、编辑沿用旧值。
+	switch mode := strings.ToLower(strings.TrimSpace(in.RealityIpMode)); mode {
+	case "", model.IPModeAuto:
+		n.RealityIPMode = model.IPModeAuto
+		if old != nil && old.IsReality() && strings.TrimSpace(in.RealityIpMode) == "" {
+			n.RealityIPMode = model.NormalizeIPMode(old.RealityIPMode)
+		}
+	case model.IPModeIPv4, model.IPModeIPv6:
+		n.RealityIPMode = mode
+	default:
+		return nil, fmt.Errorf("连接地址族无效（可选 auto / ipv4 / ipv6）")
+	}
+
 	// 编辑保留：私钥列表接口不下发，提交为空时沿用旧值
 	if old != nil && old.IsReality() {
 		if n.RealityPriv == "" {

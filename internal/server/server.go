@@ -44,6 +44,9 @@ type Server struct {
 	hostMu    sync.Mutex
 	hostIP    string
 	hostTime  time.Time
+	// host6IP/host6Time 缓存探测到的公网 IPv6，供「仅 IPv6」的 REALITY 节点使用。
+	host6IP   string
+	host6Time time.Time
 
 	// 两步验证的临时状态（仅内存）：待确认绑定密钥与登录挑战。
 	otpMu   sync.Mutex

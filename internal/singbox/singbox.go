@@ -23,6 +23,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"gost-webui/internal/model"
 )
 
 // ---------- 凭据 ----------
@@ -34,6 +36,8 @@ type RealityCred struct {
 	PublicKey  string `json:"pubKey"`
 	ShortID    string `json:"shortId"`
 	ServerName string `json:"serverName"`
+	// IPMode 决定入站监听的地址族：auto（双栈）/ ipv4（0.0.0.0）/ ipv6（::）。
+	IPMode string `json:"ipMode,omitempty"`
 }
 
 func GenerateRealityKeypair() (priv, pub string, err error) {
@@ -68,11 +72,11 @@ func ValidServerName(s string) bool {
 	return true
 }
 
-// ClientURL 生成 vless:// 分享链接（host 为面板公网地址）。
+// ClientURL 生成 vless:// 分享链接（host 为面板公网地址，IPv6 自动加方括号）。
 func ClientURL(c *RealityCred, port int, host, name string) string {
 	return fmt.Sprintf(
-		"vless://%s@%s:%d?encryption=none&security=reality&type=tcp&sni=%s&fp=chrome&pbk=%s&sid=%s&flow=xtls-rprx-vision#%s",
-		c.UUID, host, port, c.ServerName, c.PublicKey, c.ShortID, urlEscape(name))
+		"vless://%s@%s?encryption=none&security=reality&type=tcp&sni=%s&fp=chrome&pbk=%s&sid=%s&flow=xtls-rprx-vision#%s",
+		c.UUID, net.JoinHostPort(host, strconv.Itoa(port)), c.ServerName, c.PublicKey, c.ShortID, urlEscape(name))
 }
 
 func urlEscape(s string) string {
@@ -119,7 +123,7 @@ func buildInstanceConfig(id string, port int, c *RealityCred, apiAddr string) ([
 	inbound := map[string]any{
 		"type":        "vless",
 		"tag":         id,
-		"listen":      "::",
+		"listen":      model.IPModeListen(c.IPMode),
 		"listen_port": port,
 		"users":       []map[string]any{{"uuid": c.UUID, "flow": "xtls-rprx-vision"}},
 		"tls": map[string]any{

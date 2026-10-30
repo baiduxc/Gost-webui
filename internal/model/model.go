@@ -1,6 +1,8 @@
 // Package model 定义面板的核心数据模型。
 package model
 
+import "strings"
+
 // QuotaSpec 描述一个中转节点的流量配额。
 type QuotaSpec struct {
 	Enabled bool `json:"enabled"`
@@ -66,6 +68,9 @@ type Node struct {
 	RealityPub     string `json:"realityPub,omitempty"`
 	RealityShortID string `json:"realityShortId,omitempty"`
 	RealitySNI     string `json:"realitySni,omitempty"`
+	// RealityIPMode 决定节点监听的地址族：空值或 auto 为双栈（兼容旧节点），
+	// ipv4 只监听 0.0.0.0，ipv6 只监听 IPv6 并下发服务器的 IPv6 地址。
+	RealityIPMode string `json:"realityIpMode,omitempty"`
 
 	Quota QuotaSpec `json:"quota"`
 	Rate  RateSpec  `json:"rate"`
@@ -92,6 +97,32 @@ type Node struct {
 // ServiceNames 返回该节点在 gost 中对应的服务名。
 // IsReality 判断节点是否由 sing-box 引擎承载。
 func (n *Node) IsReality() bool { return n.Mode == "reality" }
+
+// reality 节点的监听地址族取值。
+const (
+	IPModeAuto = "auto"
+	IPModeIPv4 = "ipv4"
+	IPModeIPv6 = "ipv6"
+)
+
+// NormalizeIPMode 归一化地址族取值："4"/"6" 简写与空值都归到常量，未知值视为 auto。
+func NormalizeIPMode(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "4", IPModeIPv4:
+		return IPModeIPv4
+	case "6", IPModeIPv6:
+		return IPModeIPv6
+	}
+	return IPModeAuto
+}
+
+// IPModeListen 返回地址族对应的监听地址：ipv4 绑定 0.0.0.0，其余绑定 ::（双栈）。
+func IPModeListen(mode string) string {
+	if NormalizeIPMode(mode) == IPModeIPv4 {
+		return "0.0.0.0"
+	}
+	return "::"
+}
 
 func (n *Node) ServiceNames() []string {
 	if n.IsReality() {

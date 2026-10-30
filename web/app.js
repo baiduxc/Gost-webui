@@ -1204,6 +1204,7 @@ async function openNodeForm(node) {
   const isReality = !!(node && node.mode === 'reality');
   const initMode = isReality ? 'reality' : (isGost ? 'gost' : 'link');
   const rv = (v) => esc(isReality && node ? (node[v] || '') : '');
+  const ipm = (isReality && node && node.realityIpMode) || 'auto';
   const gp = (isGost && node.gostProtocol) || 'ss';
   const gt = (isGost && node.gostTransport) || gostProtocol(gp).transport;
   const gl = isGost ? !!node.gostLocal : true;
@@ -1309,6 +1310,15 @@ async function openNodeForm(node) {
         <label>伪装域名（SNI / 握手目标）</label>
         <input id="f-reality-sni" type="text" value="${rv('realitySni')}" placeholder="如 www.microsoft.com（必须支持 TLS1.3，客户端 SNI 与伪装目标一致）">
         <div class="hint">建议使用大型站点（微软/苹果/亚马逊等），不要用被墙的域名</div>
+      </div>
+      <div class="field">
+        <label>连接地址族</label>
+        <select id="f-reality-ipmode">
+          <option value="auto"${ipm === 'auto' ? ' selected' : ''}>自动 · IPv4/IPv6 双栈（默认）</option>
+          <option value="ipv4"${ipm === 'ipv4' ? ' selected' : ''}>仅 IPv4（监听 0.0.0.0）</option>
+          <option value="ipv6"${ipm === 'ipv6' ? ' selected' : ''}>仅 IPv6（监听 ::，客户端经 IPv6 连入）</option>
+        </select>
+        <div class="hint" id="realityIpModeHint"></div>
       </div>
       <div class="row">
         <div class="field">
@@ -1502,6 +1512,19 @@ async function openNodeForm(node) {
       $('#realityGenHint').textContent = '已生成，保存前请勿再次点击（会更换全部凭据）';
     } catch (e) { toast(e.message, 'err'); }
   };
+  const ipmSel = $('#f-reality-ipmode');
+  if (ipmSel) {
+    const ipmHint = () => {
+      const v = ipmSel.value;
+      $('#realityIpModeHint').textContent = v === 'ipv6'
+        ? '客户端需通过 IPv6 连入：订阅/二维码会使用服务器的公网 IPv6 地址（探测不到时回退到当前服务器地址）。请确认服务器已有 IPv6 且防火墙放行。'
+        : v === 'ipv4'
+          ? '只监听 IPv4（0.0.0.0），IPv6 客户端将无法连入。'
+          : '双栈监听，客户端使用面板探测/配置的服务器地址（一般为 IPv4）。';
+    };
+    ipmSel.onchange = ipmHint;
+    ipmHint();
+  }
   $('#f-gost-location').onchange = () => updateGostFields(false);
   $('#f-gost-protocol').onchange = () => updateGostFields(true);
   $('#f-gost-transport').onchange = () => updateGostFields(false);
@@ -1633,6 +1656,7 @@ async function saveNode(node) {
       realityShortId: $('#f-reality-sid').value.trim(),
       realityPub: $('#f-reality-pub').value.trim(),
       realityPriv: $('#f-reality-priv').value.trim(),
+      realityIpMode: $('#f-reality-ipmode').value,
     }, Object.assign({}, common, { udp: false }));
   } else {
     const link = $('#f-link').value.trim();
@@ -1661,11 +1685,12 @@ async function openLinkModal(node) {
   let r = null;
   try { r = await api(`api/nodes/${node.id}/link`); } catch (e) { toast(e.message, 'err'); return; }
   const gostNative = node.mode === 'gost' && !(['ss'].includes(node.gostProtocol || 'ss') && (node.gostTransport || 'tcp') === 'tcp');
+  const shownHost = r.host && r.host.includes(':') ? `[${r.host}]` : r.host;
   openModal(`
     <button class="modal-close" onclick="closeModal()">×</button>
     <h2>客户端链接 · ${esc(node.name)}</h2>
     ${state.publicHostPrivate ? `<div class="notice warn">当前服务器地址 ${esc(r.host)} 是内网地址，客户端无法连接，请到「系统设置」填写公网 IP 或域名。</div>` : ''}
-    <div class="notice">${gostNative ? '把下面地址用作 GOST 客户端的上游节点（<span class="mono">gost -F 地址</span>）' : '把下面链接导入兼容客户端'}，连接地址为本服务器 <b>${esc(r.host)}:${r.port}</b>。</div>
+    <div class="notice">${gostNative ? '把下面地址用作 GOST 客户端的上游节点（<span class="mono">gost -F 地址</span>）' : '把下面链接导入兼容客户端'}，连接地址为本服务器 <b>${esc(shownHost)}:${r.port}</b>。</div>
     <div class="code-box" id="linkText">${esc(r.url)}</div>
     <div style="display:flex;gap:24px;margin-top:24px;align-items:flex-start;flex-wrap:wrap">
       <button class="btn" id="copyLinkBtn">${icon('copy')} 复制链接</button>

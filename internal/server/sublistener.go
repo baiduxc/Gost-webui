@@ -294,7 +294,7 @@ func (s *Server) serveNodeClash(w http.ResponseWriter, node *model.Node) {
 	if name == "" {
 		name = "Gost-WebUI"
 	}
-	yml, _, err := sub.ClashYAML([]*model.Node{node}, s.publicHost(), name)
+	yml, _, err := sub.ClashYAML([]*model.Node{node}, s.clientHost(node), name)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -307,7 +307,7 @@ func (s *Server) serveNodeClash(w http.ResponseWriter, node *model.Node) {
 }
 
 func (s *Server) serveNodeUniversal(w http.ResponseWriter, node *model.Node) {
-	b64, _, err := sub.Universal([]*model.Node{node}, s.publicHost())
+	b64, _, err := sub.Universal([]*model.Node{node}, s.clientHost(node))
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return

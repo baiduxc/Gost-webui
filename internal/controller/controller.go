@@ -410,6 +410,7 @@ func (c *Controller) applyReality(ctx context.Context, n *model.Node) error {
 		PublicKey:  n.RealityPub,
 		ShortID:    n.RealityShortID,
 		ServerName: n.RealitySNI,
+		IPMode:     n.RealityIPMode,
 	}
 	return c.SB.Apply(ctx, n.ID, n.ListenPort, cred, n.Enabled)
 }

@@ -44,6 +44,8 @@ type nodeInput struct {
 	RealityPub     string `json:"realityPub"`
 	RealityShortId string `json:"realityShortId"`
 	RealitySni     string `json:"realitySni"`
+	// RealityIpMode 为 auto（双栈，默认）/ ipv4 / ipv6。
+	RealityIpMode string `json:"realityIpMode"`
 	Quota          *struct {
 		Enabled   bool   `json:"enabled"`
 		Period    string `json:"period"`
@@ -80,13 +82,24 @@ func (s *Server) publicHost() string {
 	return s.detectPublicIP()
 }
 
-// detectPublicIP 通过公共接口探测本机公网 IP（带缓存）。
-func (s *Server) detectPublicIP() string {
+// detectPublicIP 通过公共接口探测本机公网 IPv4（带缓存）。
+func (s *Server) detectPublicIP() string { return s.detectPublicIPFamily(false) }
+
+// detectPublicIPv6 探测本机公网 IPv6；本机没有 IPv6 出口时返回空。
+func (s *Server) detectPublicIPv6() string { return s.detectPublicIPFamily(true) }
+
+// detectPublicIPFamily 探测指定地址族的公网 IP，结果缓存 10 分钟；
+// IPv6 探测失败也会记录时间，避免每次生成链接都重新扫一轮回显服务。
+func (s *Server) detectPublicIPFamily(v6 bool) string {
 	s.hostMu.Lock()
-	if s.hostIP != "" && time.Since(s.hostTime) < 10*time.Minute {
-		ip := s.hostIP
+	cachedIP, cachedAt := s.hostIP, s.hostTime
+	if v6 {
+		cachedIP, cachedAt = s.host6IP, s.host6Time
+	}
+	// IPv4 失败不缓存（探测很快且 publicHost 依赖它）；IPv6 失败缓存空值
+	if time.Since(cachedAt) < 10*time.Minute && (cachedIP != "" || v6) {
 		s.hostMu.Unlock()
-		return ip
+		return cachedIP
 	}
 	s.hostMu.Unlock()
 
@@ -98,6 +111,15 @@ func (s *Server) detectPublicIP() string {
 		"https://myip.ipip.net/s",
 		"https://www.cloudflare.com/cdn-cgi/trace",
 		"http://ip.3322.net",
+	}
+	if v6 {
+		endpoints = []string{
+			"https://api6.ipify.org",
+			"https://ipv6.icanhazip.com",
+			"https://v6.ident.me",
+			"https://ipv6.ip.sb",
+			"https://ifconfig.co/ip",
+		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
@@ -113,15 +135,63 @@ func (s *Server) detectPublicIP() string {
 		body, _ := io.ReadAll(io.LimitReader(res.Body, 4096))
 		res.Body.Close()
 		ip := parseIPFromBody(string(body))
-		if ip != "" {
-			s.hostMu.Lock()
-			s.hostIP = ip
-			s.hostTime = time.Now()
-			s.hostMu.Unlock()
-			return ip
+		if ip == "" {
+			continue
 		}
+		// 回显服务可能因双栈回退返回另一族地址，必须校验地址族
+		if parsed := net.ParseIP(ip); parsed == nil || (parsed.To4() == nil) != v6 {
+			continue
+		}
+		s.hostMu.Lock()
+		if v6 {
+			s.host6IP, s.host6Time = ip, time.Now()
+		} else {
+			s.hostIP, s.hostTime = ip, time.Now()
+		}
+		s.hostMu.Unlock()
+		return ip
+	}
+	// 未探测到：仅 IPv6 记录本次尝试时间，以空值缓存
+	if v6 {
+		s.hostMu.Lock()
+		s.host6IP, s.host6Time = "", time.Now()
+		s.hostMu.Unlock()
 	}
 	return ""
+}
+
+// clientHost 返回下发给客户端的连接地址：REALITY 节点选了地址族时换成对应族的公网 IP，
+// auto（默认）或域名维持 publicHost 不变。
+func (s *Server) clientHost(n *model.Node) string {
+	host := s.publicHost()
+	mode := model.IPModeAuto
+	if n != nil && n.IsReality() {
+		mode = model.NormalizeIPMode(n.RealityIPMode)
+	}
+	want6 := mode == model.IPModeIPv6
+	if host == "" {
+		// 服务器只有单一地址族时 publicHost 可能探测不到，按节点地址族再试一次
+		if want6 {
+			return s.detectPublicIPv6()
+		}
+		return host
+	}
+	if mode == model.IPModeAuto {
+		return host
+	}
+	ip := net.ParseIP(host)
+	if ip == nil || (ip.To4() == nil) == want6 {
+		// 域名交给客户端自己解析，已经是目标地址族时也无需替换
+		return host
+	}
+	if want6 {
+		if v6 := s.detectPublicIPv6(); v6 != "" {
+			return v6
+		}
+	} else if v4 := s.detectPublicIP(); v4 != "" {
+		return v4
+	}
+	return host
 }
 
 // parseIPFromBody 从各种 IP 回显服务的响应里提取 IP。
@@ -163,7 +233,7 @@ func (s *Server) buildView(n *model.Node) *nodeView {
 		// 兼容旧版 Shadowsocks 节点的落地信息展示。
 		v.Landing = info
 	}
-	if host := s.publicHost(); host != "" {
+	if host := s.clientHost(n); host != "" {
 		if out, _, err := s.nodeClientURL(n, host); err == nil {
 			v.URL = out
 		}
@@ -432,7 +502,7 @@ func (s *Server) handleNodeLink(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "节点不存在")
 		return
 	}
-	host := s.publicHost()
+	host := s.clientHost(node)
 	if host == "" {
 		writeErr(w, http.StatusBadRequest, "无法自动探测公网地址，请到「设置」手动填写中转机地址")
 		return
@@ -482,7 +552,7 @@ func (s *Server) handleQRCode(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "节点不存在")
 		return
 	}
-	host := s.publicHost()
+	host := s.clientHost(node)
 	if host == "" {
 		writeErr(w, http.StatusBadRequest, "未配置中转机地址")
 		return

@@ -61,9 +61,23 @@ func clientLink(n *model.Node, host string) (string, *link.Info, error) {
 	return out, info, nil
 }
 
+// HostFunc 按节点返回订阅中使用的连接地址（如 IPv6 节点返回服务器 IPv6 地址）。
+// 返回空字符串时回退到统一的 host。
+type HostFunc func(*model.Node) string
+
+// pickHost 选择单个节点使用的连接地址。
+func pickHost(n *model.Node, host string, hostFn []HostFunc) string {
+	if len(hostFn) > 0 && hostFn[0] != nil {
+		if v := strings.TrimSpace(hostFn[0](n)); v != "" {
+			return v
+		}
+	}
+	return host
+}
+
 // Collect 遍历节点，生成每个已启用节点的中转链接与名称。
-// host 为中转机对外地址（公网 IP / 域名），空则返回错误。
-func Collect(nodes []*model.Node, host string) (*Result, error) {
+// host 为中转机对外地址（公网 IP / 域名），空则返回错误；hostFn 可按节点覆盖该地址。
+func Collect(nodes []*model.Node, host string, hostFn ...HostFunc) (*Result, error) {
 	host = strings.TrimSpace(host)
 	if host == "" {
 		return nil, fmt.Errorf("未配置中转机地址，请到「系统设置 → 服务器地址」填写公网 IP 或域名")
@@ -73,7 +87,7 @@ func Collect(nodes []*model.Node, host string) (*Result, error) {
 		if n == nil || !n.Enabled {
 			continue
 		}
-		out, _, err := clientLink(n, host)
+		out, _, err := clientLink(n, pickHost(n, host, hostFn))
 		if err != nil {
 			res.Skipped = append(res.Skipped, fmt.Sprintf("%s（%v）", n.Name, err))
 			continue
@@ -90,8 +104,8 @@ func Collect(nodes []*model.Node, host string) (*Result, error) {
 
 // Universal 返回通用订阅内容：所有节点链接换行拼接后 base64 编码，
 // 兼容 v2rayN / Shadowrocket / Stash 等按「链接列表」解析的客户端。
-func Universal(nodes []*model.Node, host string) (string, *Result, error) {
-	res, err := Collect(nodes, host)
+func Universal(nodes []*model.Node, host string, hostFn ...HostFunc) (string, *Result, error) {
+	res, err := Collect(nodes, host, hostFn...)
 	if err != nil {
 		return "", nil, err
 	}
@@ -115,8 +129,8 @@ type clashConfig struct {
 
 // ClashYAML 返回 Clash Meta（mihomo）可导入的 YAML 订阅内容。
 // name 为订阅/策略组展示名（如面板名）。
-func ClashYAML(nodes []*model.Node, host, name string) (string, *Result, error) {
-	res, err := Collect(nodes, host)
+func ClashYAML(nodes []*model.Node, host, name string, hostFn ...HostFunc) (string, *Result, error) {
+	res, err := Collect(nodes, host, hostFn...)
 	if err != nil {
 		return "", nil, err
 	}

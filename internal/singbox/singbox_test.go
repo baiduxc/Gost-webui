@@ -1,6 +1,7 @@
 package singbox
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -62,5 +63,56 @@ func TestClientURL(t *testing.T) {
 	want := "vless://u-1@1.2.3.4:8443?encryption=none&security=reality&type=tcp&sni=www.microsoft.com&fp=chrome&pbk=PUB&sid=ab12cd34&flow=xtls-rprx-vision#%E6%96%B0%E5%8A%A0%E5%9D%A1%20%E8%8A%82%E7%82%B9"
 	if got != want {
 		t.Fatalf("ClientURL:\n got %s\nwant %s", got, want)
+	}
+}
+
+// TestClientURLIPv6 确认 IPv6 地址写成 [addr]:port。
+func TestClientURLIPv6(t *testing.T) {
+	c := &RealityCred{UUID: "u-1", PublicKey: "PUB", ShortID: "ab12cd34", ServerName: "www.microsoft.com"}
+	got := ClientURL(c, 8443, "2001:db8::1", "n")
+	want := "vless://u-1@[2001:db8::1]:8443?encryption=none&security=reality&type=tcp&sni=www.microsoft.com&fp=chrome&pbk=PUB&sid=ab12cd34&flow=xtls-rprx-vision#n"
+	if got != want {
+		t.Fatalf("ClientURL ipv6:\n got %s\nwant %s", got, want)
+	}
+}
+
+// TestBuildInstanceConfigListenAddr 校验地址族决定入站监听地址，出站不受影响。
+func TestBuildInstanceConfigListenAddr(t *testing.T) {
+	priv, pub, err := GenerateRealityKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct{ mode, want string }{
+		{"", "::"},
+		{"auto", "::"},
+		{"ipv4", "0.0.0.0"},
+		{"ipv6", "::"},
+	}
+	for _, tc := range cases {
+		cred := &RealityCred{
+			UUID: GenerateUUID(), PrivateKey: priv, PublicKey: pub,
+			ShortID: GenerateShortID(), ServerName: "www.microsoft.com", IPMode: tc.mode,
+		}
+		b, err := buildInstanceConfig("node-test", 24443, cred, "127.0.0.1:19399")
+		if err != nil {
+			t.Fatalf("mode %q: %v", tc.mode, err)
+		}
+		var cfg struct {
+			Inbounds []struct {
+				Listen string `json:"listen"`
+			} `json:"inbounds"`
+			Outbounds []struct {
+				Type string `json:"type"`
+			} `json:"outbounds"`
+		}
+		if err := json.Unmarshal(b, &cfg); err != nil {
+			t.Fatalf("mode %q: %v", tc.mode, err)
+		}
+		if len(cfg.Inbounds) != 1 || cfg.Inbounds[0].Listen != tc.want {
+			t.Fatalf("mode %q listen mismatch: %s", tc.mode, b)
+		}
+		if len(cfg.Outbounds) != 1 || cfg.Outbounds[0].Type != "direct" {
+			t.Fatalf("mode %q outbound changed: %s", tc.mode, b)
+		}
 	}
 }

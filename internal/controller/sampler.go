@@ -336,7 +336,7 @@ func (c *Controller) sampleReality(ctx context.Context, hour int64) {
 		}
 		if blocked && st.Running {
 			c.Log.Info("reality 节点超配额，暂停实例", "node", n.Name, "used", used, "limit", limit)
-			if err := c.applyReality(ctx, &model.Node{ID: n.ID, ListenPort: n.ListenPort, Enabled: false}); err != nil {
+			if err := c.applyReality(ctx, &model.Node{ID: n.ID, ListenPort: n.ListenPort, RealityIPMode: n.RealityIPMode, Enabled: false}); err != nil {
 				c.Log.Warn("暂停实例失败", "node", n.ID, "err", err)
 			}
 			st.Running = false
